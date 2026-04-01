@@ -36,8 +36,20 @@ class Recipe:
     difficulty: str = "easy"  # easy, medium, hard
     like_count: int = 0
     comment_count: int = 0
+    rating_avg: float = 0.0
+    rating_count: int = 0
     created_at: float = 0.0
     author_name: str = ""  # joined field
+
+
+@dataclass
+class Rating:
+    id: int = 0
+    recipe_id: int = 0
+    user_id: int = 0
+    score: int = 0  # 1~5
+    created_at: float = 0.0
+    username: str = ""  # joined field
 
 
 @dataclass
@@ -82,6 +94,7 @@ POINTS_RECIPE_CREATED = 10
 POINTS_RECIPE_LIKED = 2
 POINTS_FIRST_RECIPE_BONUS = 20
 POINTS_COMMENT_WRITTEN = 3
+POINTS_RATING_GIVEN = 1
 
 
 def hash_password(password: str, salt: str = "") -> str:
@@ -136,6 +149,8 @@ class Database:
                 difficulty TEXT DEFAULT 'easy' CHECK(difficulty IN ('easy', 'medium', 'hard')),
                 like_count INTEGER DEFAULT 0,
                 comment_count INTEGER DEFAULT 0,
+                rating_avg REAL DEFAULT 0.0,
+                rating_count INTEGER DEFAULT 0,
                 created_at REAL DEFAULT (strftime('%s', 'now')),
                 FOREIGN KEY (author_id) REFERENCES users(id)
             );
@@ -187,6 +202,19 @@ class Database:
 
             CREATE INDEX IF NOT EXISTS idx_comments_recipe ON comments(recipe_id);
             CREATE INDEX IF NOT EXISTS idx_comments_user ON comments(user_id);
+
+            CREATE TABLE IF NOT EXISTS ratings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                recipe_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                score INTEGER NOT NULL CHECK(score >= 1 AND score <= 5),
+                created_at REAL DEFAULT (strftime('%s', 'now')),
+                UNIQUE(user_id, recipe_id),
+                FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_ratings_recipe ON ratings(recipe_id);
         """)
         conn.commit()
         conn.close()
@@ -645,3 +673,94 @@ class Database:
         ).fetchone()
         conn.close()
         return row["cnt"] if row else 0
+
+    # --- Rating operations ---
+
+    def rate_recipe(self, recipe_id: int, user_id: int, score: int) -> dict:
+        """Rate a recipe 1~5. Updates if already rated. Returns new average."""
+        if not 1 <= score <= 5:
+            raise ValueError("별점은 1~5 사이여야 합니다")
+
+        recipe = self.get_recipe(recipe_id)
+        if not recipe:
+            raise ValueError("레시피를 찾을 수 없습니다")
+        if recipe.author_id == user_id:
+            raise ValueError("본인 레시피에는 별점을 줄 수 없습니다")
+
+        conn = self._get_conn()
+        existing = conn.execute(
+            "SELECT id, score FROM ratings WHERE user_id = ? AND recipe_id = ?",
+            (user_id, recipe_id),
+        ).fetchone()
+
+        now = time.time()
+        is_new = existing is None
+
+        if existing:
+            conn.execute(
+                "UPDATE ratings SET score = ?, created_at = ? WHERE id = ?",
+                (score, now, existing["id"]),
+            )
+        else:
+            conn.execute(
+                "INSERT INTO ratings (recipe_id, user_id, score, created_at) VALUES (?, ?, ?, ?)",
+                (recipe_id, user_id, score, now),
+            )
+
+        # Recalculate average
+        row = conn.execute(
+            "SELECT AVG(score) as avg_score, COUNT(*) as cnt FROM ratings WHERE recipe_id = ?",
+            (recipe_id,),
+        ).fetchone()
+        new_avg = round(row["avg_score"], 2) if row["avg_score"] else 0.0
+        new_count = row["cnt"]
+
+        conn.execute(
+            "UPDATE recipes SET rating_avg = ?, rating_count = ? WHERE id = ?",
+            (new_avg, new_count, recipe_id),
+        )
+        conn.commit()
+        conn.close()
+
+        if is_new:
+            self.update_points(user_id, POINTS_RATING_GIVEN, "별점 평가")
+
+        return {
+            "score": score,
+            "is_new": is_new,
+            "rating_avg": new_avg,
+            "rating_count": new_count,
+        }
+
+    def get_user_rating(self, recipe_id: int, user_id: int) -> int | None:
+        """Get a user's rating for a recipe, or None."""
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT score FROM ratings WHERE recipe_id = ? AND user_id = ?",
+            (recipe_id, user_id),
+        ).fetchone()
+        conn.close()
+        return row["score"] if row else None
+
+    def get_recipe_ratings(self, recipe_id: int) -> dict:
+        """Get rating distribution for a recipe."""
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT score, COUNT(*) as cnt FROM ratings WHERE recipe_id = ? GROUP BY score",
+            (recipe_id,),
+        ).fetchall()
+        total = conn.execute(
+            "SELECT AVG(score) as avg, COUNT(*) as cnt FROM ratings WHERE recipe_id = ?",
+            (recipe_id,),
+        ).fetchone()
+        conn.close()
+
+        distribution = {i: 0 for i in range(1, 6)}
+        for row in rows:
+            distribution[row["score"]] = row["cnt"]
+
+        return {
+            "average": round(total["avg"], 2) if total["avg"] else 0.0,
+            "count": total["cnt"],
+            "distribution": distribution,
+        }

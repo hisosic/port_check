@@ -83,6 +83,9 @@ def create_app():
     class CommentUpdateRequest(BaseModel):
         content: str = Field(min_length=1, max_length=2000)
 
+    class RatingRequest(BaseModel):
+        score: int = Field(ge=1, le=5, description="별점 1~5")
+
     # --- Auth helpers ---
 
     def _get_user(authorization: str | None) -> User:
@@ -198,6 +201,7 @@ def create_app():
         ingredients = db.get_recipe_ingredients(recipe_id)
         user = _get_optional_user(authorization)
         liked = db.is_liked(user.id, recipe_id) if user else False
+        my_rating = db.get_user_rating(recipe_id, user.id) if user else None
         return {
             **_recipe_dict(recipe),
             "ingredients": [
@@ -205,6 +209,7 @@ def create_app():
                 for i in ingredients
             ],
             "liked_by_me": liked,
+            "my_rating": my_rating,
         }
 
     @app.delete("/api/recipes/{recipe_id}", tags=["recipes"])
@@ -321,6 +326,29 @@ def create_app():
         return {"success": True}
 
     # =====================
+    # RATINGS
+    # =====================
+
+    @app.post("/api/recipes/{recipe_id}/rate", tags=["ratings"])
+    def api_rate_recipe(
+        recipe_id: int,
+        req: RatingRequest,
+        authorization: str | None = Header(None),
+    ):
+        """레시피 별점 평가 (1~5). 이미 평가했으면 수정됨. 첫 평가 시 +1 포인트."""
+        user = _get_user(authorization)
+        try:
+            result = db.rate_recipe(recipe_id, user.id, req.score)
+            return {"success": True, **result}
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @app.get("/api/recipes/{recipe_id}/ratings", tags=["ratings"])
+    def api_get_ratings(recipe_id: int):
+        """레시피 별점 분포 조회"""
+        return db.get_recipe_ratings(recipe_id)
+
+    # =====================
     # LIKE / UNLIKE
     # =====================
 
@@ -405,6 +433,8 @@ def create_app():
             "difficulty": recipe.difficulty,
             "like_count": recipe.like_count,
             "comment_count": recipe.comment_count,
+            "rating_avg": recipe.rating_avg,
+            "rating_count": recipe.rating_count,
             "created_at": recipe.created_at,
         }
 
