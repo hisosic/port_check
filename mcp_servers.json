@@ -1,0 +1,342 @@
+{
+  "mcpServers": {
+    "ai-orchestrator-code_analyzer": {
+      "command": "python",
+      "args": [
+        "-m",
+        "ai_orchestrator",
+        "--mcp-server",
+        "code_analyzer"
+      ],
+      "tools": [
+        {
+          "name": "analyze_code",
+          "description": "Perform static analysis on code files",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "file_path": {
+                "type": "string",
+                "description": "File or directory to analyze"
+              }
+            }
+          }
+        }
+      ],
+      "metadata": {
+        "agent": "code_analyzer",
+        "capabilities": [
+          "code_analysis",
+          "static_analysis",
+          "ast",
+          "complexity",
+          "structure",
+          "inspect"
+        ],
+        "priority": 85
+      }
+    },
+    "ai-orchestrator-config_optimizer": {
+      "command": "python",
+      "args": [
+        "-m",
+        "ai_orchestrator",
+        "--mcp-server",
+        "config_optimizer"
+      ],
+      "tools": [
+        {
+          "name": "optimize_config",
+          "description": "Analyze and optimize project configuration files",
+          "inputSchema": {
+            "type": "object",
+            "properties": {}
+          }
+        }
+      ],
+      "metadata": {
+        "agent": "config_optimizer",
+        "capabilities": [
+          "config",
+          "configuration",
+          "settings",
+          "env",
+          "environment",
+          "setup",
+          "optimize"
+        ],
+        "priority": 55
+      }
+    },
+    "ai-orchestrator-context_engine": {
+      "command": "python",
+      "args": [
+        "-m",
+        "ai_orchestrator",
+        "--mcp-server",
+        "context_engine"
+      ],
+      "tools": [
+        {
+          "name": "analyze_project",
+          "description": "Analyze project structure, detect languages, frameworks, and git state",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "working_dir": {
+                "type": "string",
+                "description": "Directory to analyze"
+              }
+            }
+          }
+        }
+      ],
+      "metadata": {
+        "agent": "context_engine",
+        "capabilities": [
+          "context",
+          "project_detection",
+          "language_detection",
+          "framework_detection",
+          "scan"
+        ],
+        "priority": 100
+      }
+    },
+    "ai-orchestrator-error_diagnostor": {
+      "command": "python",
+      "args": [
+        "-m",
+        "ai_orchestrator",
+        "--mcp-server",
+        "error_diagnostor"
+      ],
+      "tools": [
+        {
+          "name": "diagnose_error",
+          "description": "Diagnose an error message and suggest fixes",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "error_message": {
+                "type": "string",
+                "description": "The error to diagnose"
+              }
+            },
+            "required": [
+              "error_message"
+            ]
+          }
+        }
+      ],
+      "metadata": {
+        "agent": "error_diagnostor",
+        "capabilities": [
+          "error",
+          "bug",
+          "diagnose",
+          "traceback",
+          "exception",
+          "debug",
+          "fix"
+        ],
+        "priority": 80
+      }
+    },
+    "ai-orchestrator-mcp_connector": {
+      "command": "python",
+      "args": [
+        "-m",
+        "ai_orchestrator",
+        "--mcp-server",
+        "mcp_connector"
+      ],
+      "tools": [
+        {
+          "name": "discover_mcp_servers",
+          "description": "Scan for available MCP servers and suggest new ones",
+          "inputSchema": {
+            "type": "object",
+            "properties": {}
+          }
+        },
+        {
+          "name": "generate_mcp_config",
+          "description": "Generate optimized MCP server configuration",
+          "inputSchema": {
+            "type": "object",
+            "properties": {}
+          }
+        }
+      ],
+      "metadata": {
+        "agent": "mcp_connector",
+        "capabilities": [
+          "mcp",
+          "server_discovery",
+          "tool_discovery",
+          "integration",
+          "connect"
+        ],
+        "priority": 80
+      }
+    },
+    "ai-orchestrator-security_auditor": {
+      "command": "python",
+      "args": [
+        "-m",
+        "ai_orchestrator",
+        "--mcp-server",
+        "security_auditor"
+      ],
+      "tools": [
+        {
+          "name": "security_audit",
+          "description": "Run security audit including secret scanning and vulnerability detection",
+          "inputSchema": {
+            "type": "object",
+            "properties": {}
+          }
+        }
+      ],
+      "metadata": {
+        "agent": "security_auditor",
+        "capabilities": [
+          "security",
+          "vulnerability",
+          "audit",
+          "secrets",
+          "owasp",
+          "secure"
+        ],
+        "priority": 85
+      }
+    },
+    "ai-orchestrator-skill_composer": {
+      "command": "python",
+      "args": [
+        "-m",
+        "ai_orchestrator",
+        "--mcp-server",
+        "skill_composer"
+      ],
+      "tools": [
+        {
+          "name": "compose_skill",
+          "description": "Create a skill chain for a given task",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "task": {
+                "type": "string",
+                "description": "Task to compose skills for"
+              }
+            },
+            "required": [
+              "task"
+            ]
+          }
+        },
+        {
+          "name": "list_skills",
+          "description": "List all available pre-defined skill chains",
+          "inputSchema": {
+            "type": "object",
+            "properties": {}
+          }
+        }
+      ],
+      "metadata": {
+        "agent": "skill_composer",
+        "capabilities": [
+          "skill",
+          "chain",
+          "compose",
+          "pipeline",
+          "automate",
+          "workflow"
+        ],
+        "priority": 75
+      }
+    },
+    "ai-orchestrator-test_orchestrator": {
+      "command": "python",
+      "args": [
+        "-m",
+        "ai_orchestrator",
+        "--mcp-server",
+        "test_orchestrator"
+      ],
+      "tools": [
+        {
+          "name": "run_tests",
+          "description": "Discover and run project test suites",
+          "inputSchema": {
+            "type": "object",
+            "properties": {}
+          }
+        }
+      ],
+      "metadata": {
+        "agent": "test_orchestrator",
+        "capabilities": [
+          "test",
+          "testing",
+          "unittest",
+          "pytest",
+          "jest",
+          "spec",
+          "validation"
+        ],
+        "priority": 80
+      }
+    },
+    "ai-orchestrator-workflow_coordinator": {
+      "command": "python",
+      "args": [
+        "-m",
+        "ai_orchestrator",
+        "--mcp-server",
+        "workflow_coordinator"
+      ],
+      "tools": [
+        {
+          "name": "plan_workflow",
+          "description": "Decompose a complex task into an agent workflow plan",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "task": {
+                "type": "string",
+                "description": "Task to decompose"
+              }
+            },
+            "required": [
+              "task"
+            ]
+          }
+        },
+        {
+          "name": "list_patterns",
+          "description": "List available workflow patterns and their agent sequences",
+          "inputSchema": {
+            "type": "object",
+            "properties": {}
+          }
+        }
+      ],
+      "metadata": {
+        "agent": "workflow_coordinator",
+        "capabilities": [
+          "workflow",
+          "orchestration",
+          "multi_step",
+          "coordination",
+          "planning",
+          "complex_task"
+        ],
+        "priority": 95
+      }
+    }
+  }
+}

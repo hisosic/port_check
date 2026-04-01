@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "ai-orchestrator"
+version = "1.0.0"
+description = "20개 전문 에이전트가 협력하는 동적 AI 자동화 프레임워크"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [
+    {name = "AI Agent Orchestrator"},
+]
+
+[project.scripts]
+ai-orchestrator = "ai_orchestrator.__main__:entry_point"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["ai_orchestrator*"]
+
+[tool.pytest.ini_options]
+testpaths = ["ai_orchestrator/tests"]
+asyncio_mode = "auto"
