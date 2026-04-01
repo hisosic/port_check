@@ -77,6 +77,12 @@ def create_app():
         ingredients: list[str] = Field(min_length=1, description="냉장고에 있는 재료 목록")
         min_match_ratio: float = Field(ge=0.0, le=1.0, default=0.3)
 
+    class CommentCreateRequest(BaseModel):
+        content: str = Field(min_length=1, max_length=2000)
+
+    class CommentUpdateRequest(BaseModel):
+        content: str = Field(min_length=1, max_length=2000)
+
     # --- Auth helpers ---
 
     def _get_user(authorization: str | None) -> User:
@@ -250,6 +256,71 @@ def create_app():
         }
 
     # =====================
+    # COMMENTS
+    # =====================
+
+    @app.post("/api/recipes/{recipe_id}/comments", tags=["comments"])
+    def api_add_comment(
+        recipe_id: int,
+        req: CommentCreateRequest,
+        authorization: str | None = Header(None),
+    ):
+        """댓글 작성 (포인트 지급)"""
+        user = _get_user(authorization)
+        try:
+            comment = db.add_comment(recipe_id, user.id, req.content)
+            updated_user = db.get_user(user.id)
+            return {
+                "success": True,
+                "comment": _comment_dict(comment),
+                "points_earned": 3,
+                "total_points": updated_user.points,
+            }
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @app.get("/api/recipes/{recipe_id}/comments", tags=["comments"])
+    def api_get_comments(
+        recipe_id: int,
+        offset: int = Query(0, ge=0),
+        limit: int = Query(50, ge=1, le=100),
+    ):
+        """레시피 댓글 목록 조회"""
+        comments = db.get_comments(recipe_id, offset=offset, limit=limit)
+        return {
+            "comments": [_comment_dict(c) for c in comments],
+            "count": len(comments),
+        }
+
+    @app.put("/api/comments/{comment_id}", tags=["comments"])
+    def api_update_comment(
+        comment_id: int,
+        req: CommentUpdateRequest,
+        authorization: str | None = Header(None),
+    ):
+        """댓글 수정 (본인만 가능)"""
+        user = _get_user(authorization)
+        try:
+            comment = db.update_comment(comment_id, user.id, req.content)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        if not comment:
+            raise HTTPException(404, "댓글을 찾을 수 없거나 권한이 없습니다")
+        return {"success": True, "comment": _comment_dict(comment)}
+
+    @app.delete("/api/comments/{comment_id}", tags=["comments"])
+    def api_delete_comment(
+        comment_id: int,
+        authorization: str | None = Header(None),
+    ):
+        """댓글 삭제 (본인만 가능)"""
+        user = _get_user(authorization)
+        deleted = db.delete_comment(comment_id, user.id)
+        if not deleted:
+            raise HTTPException(404, "댓글을 찾을 수 없거나 권한이 없습니다")
+        return {"success": True}
+
+    # =====================
     # LIKE / UNLIKE
     # =====================
 
@@ -333,7 +404,19 @@ def create_app():
             "servings": recipe.servings,
             "difficulty": recipe.difficulty,
             "like_count": recipe.like_count,
+            "comment_count": recipe.comment_count,
             "created_at": recipe.created_at,
+        }
+
+    def _comment_dict(comment) -> dict:
+        return {
+            "id": comment.id,
+            "recipe_id": comment.recipe_id,
+            "user_id": comment.user_id,
+            "username": comment.username,
+            "content": comment.content,
+            "created_at": comment.created_at,
+            "updated_at": comment.updated_at,
         }
 
     return app

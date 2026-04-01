@@ -35,6 +35,7 @@ class Recipe:
     servings: int = 1
     difficulty: str = "easy"  # easy, medium, hard
     like_count: int = 0
+    comment_count: int = 0
     created_at: float = 0.0
     author_name: str = ""  # joined field
 
@@ -65,10 +66,22 @@ class PointHistory:
     created_at: float = 0.0
 
 
+@dataclass
+class Comment:
+    id: int = 0
+    recipe_id: int = 0
+    user_id: int = 0
+    content: str = ""
+    created_at: float = 0.0
+    updated_at: float = 0.0
+    username: str = ""  # joined field
+
+
 # --- Point configuration ---
 POINTS_RECIPE_CREATED = 10
 POINTS_RECIPE_LIKED = 2
 POINTS_FIRST_RECIPE_BONUS = 20
+POINTS_COMMENT_WRITTEN = 3
 
 
 def hash_password(password: str, salt: str = "") -> str:
@@ -122,6 +135,7 @@ class Database:
                 servings INTEGER DEFAULT 1,
                 difficulty TEXT DEFAULT 'easy' CHECK(difficulty IN ('easy', 'medium', 'hard')),
                 like_count INTEGER DEFAULT 0,
+                comment_count INTEGER DEFAULT 0,
                 created_at REAL DEFAULT (strftime('%s', 'now')),
                 FOREIGN KEY (author_id) REFERENCES users(id)
             );
@@ -159,6 +173,20 @@ class Database:
             CREATE INDEX IF NOT EXISTS idx_recipes_author ON recipes(author_id);
             CREATE INDEX IF NOT EXISTS idx_likes_user ON likes(user_id);
             CREATE INDEX IF NOT EXISTS idx_likes_recipe ON likes(recipe_id);
+
+            CREATE TABLE IF NOT EXISTS comments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                recipe_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                content TEXT NOT NULL,
+                created_at REAL DEFAULT (strftime('%s', 'now')),
+                updated_at REAL DEFAULT (strftime('%s', 'now')),
+                FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_comments_recipe ON comments(recipe_id);
+            CREATE INDEX IF NOT EXISTS idx_comments_user ON comments(user_id);
         """)
         conn.commit()
         conn.close()
@@ -508,3 +536,112 @@ class Database:
         ).fetchall()
         conn.close()
         return [Recipe(**dict(r)) for r in rows]
+
+    # --- Comment operations ---
+
+    def add_comment(self, recipe_id: int, user_id: int, content: str) -> Comment:
+        """Add a comment to a recipe. Awards points to the commenter."""
+        content = content.strip()
+        if not content:
+            raise ValueError("댓글 내용을 입력하세요")
+        if len(content) > 2000:
+            raise ValueError("댓글은 2000자 이하로 작성하세요")
+
+        recipe = self.get_recipe(recipe_id)
+        if not recipe:
+            raise ValueError("레시피를 찾을 수 없습니다")
+
+        conn = self._get_conn()
+        now = time.time()
+        cur = conn.execute(
+            "INSERT INTO comments (recipe_id, user_id, content, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+            (recipe_id, user_id, content, now, now),
+        )
+        conn.execute(
+            "UPDATE recipes SET comment_count = comment_count + 1 WHERE id = ?",
+            (recipe_id,),
+        )
+        conn.commit()
+        comment_id = cur.lastrowid
+        conn.close()
+
+        self.update_points(user_id, POINTS_COMMENT_WRITTEN, "댓글 작성")
+
+        return Comment(
+            id=comment_id, recipe_id=recipe_id, user_id=user_id,
+            content=content, created_at=now, updated_at=now,
+        )
+
+    def get_comments(
+        self, recipe_id: int, offset: int = 0, limit: int = 50,
+    ) -> list[Comment]:
+        """Get comments for a recipe, newest first."""
+        conn = self._get_conn()
+        rows = conn.execute(
+            """SELECT c.*, u.username
+               FROM comments c JOIN users u ON c.user_id = u.id
+               WHERE c.recipe_id = ?
+               ORDER BY c.created_at DESC LIMIT ? OFFSET ?""",
+            (recipe_id, limit, offset),
+        ).fetchall()
+        conn.close()
+        return [Comment(**dict(r)) for r in rows]
+
+    def update_comment(self, comment_id: int, user_id: int, content: str) -> Comment | None:
+        """Update a comment. Only the author can edit."""
+        content = content.strip()
+        if not content:
+            raise ValueError("댓글 내용을 입력하세요")
+        if len(content) > 2000:
+            raise ValueError("댓글은 2000자 이하로 작성하세요")
+
+        conn = self._get_conn()
+        now = time.time()
+        result = conn.execute(
+            "UPDATE comments SET content = ?, updated_at = ? WHERE id = ? AND user_id = ?",
+            (content, now, comment_id, user_id),
+        )
+        conn.commit()
+        if result.rowcount == 0:
+            conn.close()
+            return None
+
+        row = conn.execute(
+            """SELECT c.*, u.username
+               FROM comments c JOIN users u ON c.user_id = u.id
+               WHERE c.id = ?""",
+            (comment_id,),
+        ).fetchone()
+        conn.close()
+        return Comment(**dict(row)) if row else None
+
+    def delete_comment(self, comment_id: int, user_id: int) -> bool:
+        """Delete a comment. Only the author can delete."""
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT recipe_id FROM comments WHERE id = ? AND user_id = ?",
+            (comment_id, user_id),
+        ).fetchone()
+        if not row:
+            conn.close()
+            return False
+
+        recipe_id = row["recipe_id"]
+        conn.execute("DELETE FROM comments WHERE id = ? AND user_id = ?",
+                      (comment_id, user_id))
+        conn.execute(
+            "UPDATE recipes SET comment_count = MAX(0, comment_count - 1) WHERE id = ?",
+            (recipe_id,),
+        )
+        conn.commit()
+        conn.close()
+        return True
+
+    def get_comment_count(self, recipe_id: int) -> int:
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT COUNT(*) as cnt FROM comments WHERE recipe_id = ?",
+            (recipe_id,),
+        ).fetchone()
+        conn.close()
+        return row["cnt"] if row else 0
