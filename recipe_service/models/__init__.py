@@ -549,6 +549,189 @@ class HealthGoal:
     daily_fat_g: float = 0.0
 
 
+@dataclass
+class RatingReview:
+    id: int = 0
+    rating_id: int = 0
+    user_id: int = 0
+    recipe_id: int = 0
+    text: str = ""
+    created_at: float = 0.0
+
+
+@dataclass
+class IngredientGroup:
+    id: int = 0
+    recipe_id: int = 0
+    group_name: str = ""
+    sort_order: int = 0
+
+
+@dataclass
+class RecipeDraft:
+    id: int = 0
+    user_id: int = 0
+    title: str = ""
+    data_json: str = ""
+    updated_at: float = 0.0
+
+
+@dataclass
+class CookingProgress:
+    id: int = 0
+    user_id: int = 0
+    recipe_id: int = 0
+    current_step: int = 0
+    total_steps: int = 0
+    started_at: float = 0.0
+    updated_at: float = 0.0
+
+
+@dataclass
+class RecipeSource:
+    id: int = 0
+    recipe_id: int = 0
+    url: str = ""
+    source_name: str = ""
+
+
+@dataclass
+class CostLog:
+    id: int = 0
+    user_id: int = 0
+    recipe_id: int = 0
+    amount: float = 0.0
+    note: str = ""
+    created_at: float = 0.0
+
+
+@dataclass
+class RecipeReaction:
+    id: int = 0
+    user_id: int = 0
+    recipe_id: int = 0
+    emoji: str = ""
+    created_at: float = 0.0
+
+
+@dataclass
+class CookingPlaylist:
+    id: int = 0
+    user_id: int = 0
+    name: str = ""
+    created_at: float = 0.0
+
+
+@dataclass
+class PlaylistItem:
+    id: int = 0
+    playlist_id: int = 0
+    recipe_id: int = 0
+    sort_order: int = 0
+
+
+@dataclass
+class RecipeCertification:
+    id: int = 0
+    recipe_id: int = 0
+    certified_by: int = 0
+    certified_at: float = 0.0
+
+
+@dataclass
+class IngredientSeason:
+    id: int = 0
+    name: str = ""
+    seasons: str = ""
+
+
+@dataclass
+class TimerPreset:
+    id: int = 0
+    user_id: int = 0
+    name: str = ""
+    timers_json: str = ""
+    created_at: float = 0.0
+
+
+@dataclass
+class RecipeEditLog:
+    id: int = 0
+    recipe_id: int = 0
+    user_id: int = 0
+    field_name: str = ""
+    old_value: str = ""
+    new_value: str = ""
+    edited_at: float = 0.0
+
+
+@dataclass
+class SocialShare:
+    id: int = 0
+    recipe_id: int = 0
+    platform: str = ""
+    shared_at: float = 0.0
+
+
+@dataclass
+class RecipeTemplate:
+    id: int = 0
+    name: str = ""
+    description: str = ""
+    default_data_json: str = ""
+    created_at: float = 0.0
+
+
+@dataclass
+class PriceAlert:
+    id: int = 0
+    user_id: int = 0
+    ingredient: str = ""
+    max_price: float = 0.0
+    created_at: float = 0.0
+
+
+@dataclass
+class CookingClass:
+    id: int = 0
+    title: str = ""
+    description: str = ""
+    instructor_id: int = 0
+    scheduled_date: str = ""
+    max_participants: int = 20
+    created_at: float = 0.0
+
+
+@dataclass
+class RecipeBundle:
+    id: int = 0
+    name: str = ""
+    description: str = ""
+    created_by: int = 0
+    created_at: float = 0.0
+
+
+@dataclass
+class MealPrep:
+    id: int = 0
+    user_id: int = 0
+    name: str = ""
+    prep_date: str = ""
+    servings: int = 4
+    created_at: float = 0.0
+
+
+@dataclass
+class JournalEntry:
+    id: int = 0
+    user_id: int = 0
+    date: str = ""
+    content: str = ""
+    recipe_id: int | None = None
+    mood: str = ""
+    created_at: float = 0.0
+
+
 # --- Unit conversion factors ---
 UNIT_CONVERSIONS = {
     ("g", "oz"): 0.03527396,
@@ -1252,6 +1435,482 @@ class Database:
                 query TEXT UNIQUE NOT NULL COLLATE NOCASE,
                 search_count INTEGER DEFAULT 1
             );
+
+            CREATE TABLE IF NOT EXISTS rating_reviews (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                rating_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                recipe_id INTEGER NOT NULL,
+                text TEXT NOT NULL,
+                created_at REAL DEFAULT (strftime('%s', 'now')),
+                FOREIGN KEY (user_id) REFERENCES users(id),
+                FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS ingredient_groups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                recipe_id INTEGER NOT NULL,
+                group_name TEXT NOT NULL,
+                sort_order INTEGER DEFAULT 0,
+                FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS recipe_drafts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                title TEXT NOT NULL,
+                data_json TEXT NOT NULL,
+                updated_at REAL DEFAULT (strftime('%s', 'now')),
+                UNIQUE(user_id, title),
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS cooking_progress (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                recipe_id INTEGER NOT NULL,
+                current_step INTEGER DEFAULT 0,
+                total_steps INTEGER DEFAULT 0,
+                started_at REAL DEFAULT (strftime('%s', 'now')),
+                updated_at REAL DEFAULT (strftime('%s', 'now')),
+                UNIQUE(user_id, recipe_id),
+                FOREIGN KEY (user_id) REFERENCES users(id),
+                FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS recipe_sources (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                recipe_id INTEGER UNIQUE NOT NULL,
+                url TEXT NOT NULL,
+                source_name TEXT DEFAULT '',
+                FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS cost_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                recipe_id INTEGER NOT NULL,
+                amount REAL NOT NULL,
+                note TEXT DEFAULT '',
+                created_at REAL DEFAULT (strftime('%s', 'now')),
+                FOREIGN KEY (user_id) REFERENCES users(id),
+                FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS recipe_reactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                recipe_id INTEGER NOT NULL,
+                emoji TEXT NOT NULL,
+                created_at REAL DEFAULT (strftime('%s', 'now')),
+                UNIQUE(user_id, recipe_id, emoji),
+                FOREIGN KEY (user_id) REFERENCES users(id),
+                FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS cooking_playlists (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                created_at REAL DEFAULT (strftime('%s', 'now')),
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS playlist_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                playlist_id INTEGER NOT NULL,
+                recipe_id INTEGER NOT NULL,
+                sort_order INTEGER DEFAULT 0,
+                UNIQUE(playlist_id, recipe_id),
+                FOREIGN KEY (playlist_id) REFERENCES cooking_playlists(id) ON DELETE CASCADE,
+                FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS recipe_certifications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                recipe_id INTEGER UNIQUE NOT NULL,
+                certified_by INTEGER NOT NULL,
+                certified_at REAL DEFAULT (strftime('%s', 'now')),
+                FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE,
+                FOREIGN KEY (certified_by) REFERENCES users(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS ingredient_seasons (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT UNIQUE NOT NULL COLLATE NOCASE,
+                seasons TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS timer_presets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                timers_json TEXT NOT NULL,
+                created_at REAL DEFAULT (strftime('%s', 'now')),
+                UNIQUE(user_id, name),
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS recipe_edit_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                recipe_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                field_name TEXT NOT NULL,
+                old_value TEXT DEFAULT '',
+                new_value TEXT DEFAULT '',
+                edited_at REAL DEFAULT (strftime('%s', 'now')),
+                FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS social_shares (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                recipe_id INTEGER NOT NULL,
+                platform TEXT NOT NULL,
+                shared_at REAL DEFAULT (strftime('%s', 'now')),
+                FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS recipe_templates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT UNIQUE NOT NULL,
+                description TEXT DEFAULT '',
+                default_data_json TEXT NOT NULL,
+                created_at REAL DEFAULT (strftime('%s', 'now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS cooking_skills (
+                user_id INTEGER PRIMARY KEY,
+                skill_level TEXT NOT NULL CHECK(skill_level IN ('beginner','intermediate','advanced','expert')),
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS serving_preferences (
+                user_id INTEGER PRIMARY KEY,
+                default_servings INTEGER DEFAULT 2,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS recipe_archives (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                recipe_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                archived_at REAL DEFAULT (strftime('%s', 'now')),
+                UNIQUE(user_id, recipe_id),
+                FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS achievements (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                code TEXT UNIQUE NOT NULL,
+                name TEXT NOT NULL,
+                description TEXT DEFAULT '',
+                condition_type TEXT NOT NULL,
+                condition_value INTEGER DEFAULT 0
+            );
+
+            CREATE TABLE IF NOT EXISTS user_achievements (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                achievement_id INTEGER NOT NULL,
+                awarded_at REAL DEFAULT (strftime('%s', 'now')),
+                UNIQUE(user_id, achievement_id),
+                FOREIGN KEY (user_id) REFERENCES users(id),
+                FOREIGN KEY (achievement_id) REFERENCES achievements(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS hashtags (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                recipe_id INTEGER NOT NULL,
+                hashtag TEXT NOT NULL,
+                UNIQUE(recipe_id, hashtag),
+                FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS price_alerts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                ingredient TEXT NOT NULL,
+                max_price REAL NOT NULL,
+                created_at REAL DEFAULT (strftime('%s', 'now')),
+                UNIQUE(user_id, ingredient),
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS recipe_collaborators (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                recipe_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                role TEXT DEFAULT 'editor',
+                added_at REAL DEFAULT (strftime('%s', 'now')),
+                UNIQUE(recipe_id, user_id),
+                FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS cooking_classes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                description TEXT DEFAULT '',
+                instructor_id INTEGER NOT NULL,
+                scheduled_date TEXT NOT NULL,
+                max_participants INTEGER DEFAULT 20,
+                created_at REAL DEFAULT (strftime('%s', 'now')),
+                FOREIGN KEY (instructor_id) REFERENCES users(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS class_registrations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                class_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                registered_at REAL DEFAULT (strftime('%s', 'now')),
+                UNIQUE(class_id, user_id),
+                FOREIGN KEY (class_id) REFERENCES cooking_classes(id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS recipe_bundles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                description TEXT DEFAULT '',
+                created_by INTEGER NOT NULL,
+                created_at REAL DEFAULT (strftime('%s', 'now')),
+                FOREIGN KEY (created_by) REFERENCES users(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS bundle_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                bundle_id INTEGER NOT NULL,
+                recipe_id INTEGER NOT NULL,
+                sort_order INTEGER DEFAULT 0,
+                UNIQUE(bundle_id, recipe_id),
+                FOREIGN KEY (bundle_id) REFERENCES recipe_bundles(id) ON DELETE CASCADE,
+                FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS meal_preps (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                prep_date TEXT NOT NULL,
+                servings INTEGER DEFAULT 4,
+                created_at REAL DEFAULT (strftime('%s', 'now')),
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS meal_prep_recipes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                prep_id INTEGER NOT NULL,
+                recipe_id INTEGER NOT NULL,
+                UNIQUE(prep_id, recipe_id),
+                FOREIGN KEY (prep_id) REFERENCES meal_preps(id) ON DELETE CASCADE,
+                FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS flavor_profiles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                recipe_id INTEGER UNIQUE NOT NULL,
+                sweet INTEGER DEFAULT 0,
+                salty INTEGER DEFAULT 0,
+                sour INTEGER DEFAULT 0,
+                bitter INTEGER DEFAULT 0,
+                umami INTEGER DEFAULT 0,
+                spicy INTEGER DEFAULT 0,
+                FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS approval_queue (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                recipe_id INTEGER UNIQUE NOT NULL,
+                submitted_by INTEGER NOT NULL,
+                status TEXT DEFAULT 'pending' CHECK(status IN ('pending','approved','rejected')),
+                reviewer_id INTEGER,
+                reason TEXT DEFAULT '',
+                submitted_at REAL DEFAULT (strftime('%s', 'now')),
+                reviewed_at REAL,
+                FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE,
+                FOREIGN KEY (submitted_by) REFERENCES users(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS cooking_journal (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                date TEXT NOT NULL,
+                content TEXT NOT NULL,
+                recipe_id INTEGER DEFAULT NULL,
+                mood TEXT DEFAULT '',
+                created_at REAL DEFAULT (strftime('%s', 'now')),
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS ingredient_pairings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ingredient_a TEXT NOT NULL COLLATE NOCASE,
+                ingredient_b TEXT NOT NULL COLLATE NOCASE,
+                score INTEGER DEFAULT 5 CHECK(score BETWEEN 1 AND 10),
+                UNIQUE(ingredient_a, ingredient_b)
+            );
+
+            CREATE TABLE IF NOT EXISTS mood_tags (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                recipe_id INTEGER NOT NULL,
+                mood TEXT NOT NULL,
+                UNIQUE(recipe_id, mood),
+                FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS speed_challenges (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                recipe_id INTEGER NOT NULL,
+                target_minutes INTEGER NOT NULL,
+                created_at REAL DEFAULT (strftime('%s', 'now')),
+                FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS speed_results (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                challenge_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                actual_minutes INTEGER NOT NULL,
+                created_at REAL DEFAULT (strftime('%s', 'now')),
+                UNIQUE(challenge_id, user_id),
+                FOREIGN KEY (challenge_id) REFERENCES speed_challenges(id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS recipe_gifts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sender_id INTEGER NOT NULL,
+                recipient_id INTEGER NOT NULL,
+                recipe_id INTEGER NOT NULL,
+                message TEXT DEFAULT '',
+                is_opened INTEGER DEFAULT 0,
+                created_at REAL DEFAULT (strftime('%s', 'now')),
+                FOREIGN KEY (sender_id) REFERENCES users(id),
+                FOREIGN KEY (recipient_id) REFERENCES users(id),
+                FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS ingredient_wiki (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT UNIQUE NOT NULL COLLATE NOCASE,
+                description TEXT DEFAULT '',
+                tips TEXT DEFAULT '',
+                storage TEXT DEFAULT '',
+                created_at REAL DEFAULT (strftime('%s', 'now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS cooking_techniques (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT UNIQUE NOT NULL,
+                description TEXT DEFAULT '',
+                difficulty TEXT DEFAULT 'easy'
+            );
+
+            CREATE TABLE IF NOT EXISTS recipe_techniques (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                recipe_id INTEGER NOT NULL,
+                technique_id INTEGER NOT NULL,
+                UNIQUE(recipe_id, technique_id),
+                FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE,
+                FOREIGN KEY (technique_id) REFERENCES cooking_techniques(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS chef_endorsements (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                recipe_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                comment TEXT DEFAULT '',
+                created_at REAL DEFAULT (strftime('%s', 'now')),
+                UNIQUE(recipe_id, user_id),
+                FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS ingredient_origins (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT UNIQUE NOT NULL COLLATE NOCASE,
+                origin TEXT NOT NULL,
+                description TEXT DEFAULT ''
+            );
+
+            CREATE TABLE IF NOT EXISTS events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                event_date TEXT NOT NULL,
+                description TEXT DEFAULT '',
+                created_at REAL DEFAULT (strftime('%s', 'now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS event_recipes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_id INTEGER NOT NULL,
+                recipe_id INTEGER NOT NULL,
+                UNIQUE(event_id, recipe_id),
+                FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE,
+                FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS group_cooks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                recipe_id INTEGER NOT NULL,
+                host_id INTEGER NOT NULL,
+                cook_date TEXT NOT NULL,
+                max_participants INTEGER DEFAULT 8,
+                created_at REAL DEFAULT (strftime('%s', 'now')),
+                FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE,
+                FOREIGN KEY (host_id) REFERENCES users(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS group_cook_members (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                group_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                joined_at REAL DEFAULT (strftime('%s', 'now')),
+                UNIQUE(group_id, user_id),
+                FOREIGN KEY (group_id) REFERENCES group_cooks(id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS stores (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                location TEXT DEFAULT '',
+                description TEXT DEFAULT ''
+            );
+
+            CREATE TABLE IF NOT EXISTS store_ingredients (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                store_id INTEGER NOT NULL,
+                ingredient TEXT NOT NULL COLLATE NOCASE,
+                price REAL DEFAULT 0,
+                UNIQUE(store_id, ingredient),
+                FOREIGN KEY (store_id) REFERENCES stores(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS recipe_stories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                recipe_id INTEGER UNIQUE NOT NULL,
+                story TEXT NOT NULL,
+                created_at REAL DEFAULT (strftime('%s', 'now')),
+                FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS cooking_faqs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                question TEXT NOT NULL,
+                answer TEXT NOT NULL,
+                category TEXT DEFAULT 'general',
+                created_at REAL DEFAULT (strftime('%s', 'now'))
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_rating_reviews_recipe ON rating_reviews(recipe_id);
+            CREATE INDEX IF NOT EXISTS idx_ingredient_groups_recipe ON ingredient_groups(recipe_id);
+            CREATE INDEX IF NOT EXISTS idx_cost_logs_user ON cost_logs(user_id);
+            CREATE INDEX IF NOT EXISTS idx_recipe_reactions_recipe ON recipe_reactions(recipe_id);
+            CREATE INDEX IF NOT EXISTS idx_hashtags_hashtag ON hashtags(hashtag);
+            CREATE INDEX IF NOT EXISTS idx_mood_tags_mood ON mood_tags(mood);
 
             -- Seed default badges
             INSERT OR IGNORE INTO badges (code, name, description, icon) VALUES
