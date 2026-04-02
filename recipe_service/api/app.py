@@ -86,6 +86,34 @@ def create_app():
     class RatingRequest(BaseModel):
         score: int = Field(ge=1, le=5, description="별점 1~5")
 
+    class TagsRequest(BaseModel):
+        tags: list[str] = Field(min_length=1, max_length=20)
+
+    class SearchRequest(BaseModel):
+        query: str = Field(min_length=1, max_length=200)
+
+    class ReportRequest(BaseModel):
+        target_type: str = Field(pattern="^(recipe|comment)$")
+        target_id: int
+        reason: str = Field(min_length=1, max_length=1000)
+
+    class ForkRequest(BaseModel):
+        title: str | None = None
+
+    class CookLogRequest(BaseModel):
+        note: str = ""
+        photo_url: str = ""
+
+    class CollectionCreateRequest(BaseModel):
+        name: str = Field(min_length=1, max_length=100)
+        description: str = ""
+
+    class CollectionAddRequest(BaseModel):
+        recipe_id: int
+
+    class MarkReadRequest(BaseModel):
+        notification_ids: list[int] | None = None
+
     # --- Auth helpers ---
 
     def _get_user(authorization: str | None) -> User:
@@ -189,6 +217,23 @@ def create_app():
             "count": len(recipes),
         }
 
+    # --- Search & Weekly Popular must be before {recipe_id} to avoid route conflict ---
+
+    @app.get("/api/recipes/search", tags=["search"])
+    def api_search_recipes_early(
+        q: str = Query(..., min_length=1, max_length=200),
+        limit: int = Query(50, ge=1, le=100),
+    ):
+        """레시피 텍스트 검색 (제목, 설명)"""
+        recipes = db.search_recipes(q, limit=limit)
+        return {"query": q, "recipes": [_recipe_dict(r) for r in recipes], "count": len(recipes)}
+
+    @app.get("/api/recipes/weekly-popular", tags=["recipes"])
+    def api_weekly_popular_early(limit: int = Query(20, ge=1, le=100)):
+        """주간 인기 레시피"""
+        recipes = db.get_weekly_popular(limit=limit)
+        return {"recipes": [_recipe_dict(r) for r in recipes], "count": len(recipes)}
+
     @app.get("/api/recipes/{recipe_id}", tags=["recipes"])
     def api_get_recipe(
         recipe_id: int,
@@ -203,12 +248,14 @@ def create_app():
         liked = db.is_liked(user.id, recipe_id) if user else False
         my_rating = db.get_user_rating(recipe_id, user.id) if user else None
         bookmarked = db.is_bookmarked(user.id, recipe_id) if user else False
+        tags = db.get_recipe_tags(recipe_id)
         return {
             **_recipe_dict(recipe),
             "ingredients": [
                 {"name": i.name, "amount": i.amount, "unit": i.unit}
                 for i in ingredients
             ],
+            "tags": tags,
             "liked_by_me": liked,
             "my_rating": my_rating,
             "bookmarked_by_me": bookmarked,
@@ -436,6 +483,344 @@ def create_app():
         }
 
     # =====================
+    # FOLLOW (Feature 1)
+    # =====================
+
+    @app.post("/api/users/{user_id}/follow", tags=["follow"])
+    def api_toggle_follow(
+        user_id: int,
+        authorization: str | None = Header(None),
+    ):
+        """유저 팔로우/언팔로우 토글"""
+        me = _get_user(authorization)
+        try:
+            result = db.toggle_follow(me.id, user_id)
+            return {"success": True, **result}
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @app.get("/api/users/{user_id}/followers", tags=["follow"])
+    def api_get_followers(user_id: int):
+        """유저의 팔로워 목록"""
+        followers = db.get_followers(user_id)
+        return {
+            "followers": [{"id": u.id, "username": u.username, "points": u.points} for u in followers],
+            "count": len(followers),
+        }
+
+    @app.get("/api/users/{user_id}/following", tags=["follow"])
+    def api_get_following(user_id: int):
+        """유저가 팔로우하는 목록"""
+        following = db.get_following(user_id)
+        return {
+            "following": [{"id": u.id, "username": u.username, "points": u.points} for u in following],
+            "count": len(following),
+        }
+
+    @app.get("/api/feed", tags=["follow"])
+    def api_feed(
+        limit: int = Query(50, ge=1, le=100),
+        authorization: str | None = Header(None),
+    ):
+        """팔로우한 유저들의 최신 레시피 피드"""
+        user = _get_user(authorization)
+        recipes = db.get_following_recipes(user.id, limit=limit)
+        return {"recipes": [_recipe_dict(r) for r in recipes], "count": len(recipes)}
+
+    # =====================
+    # TAGS (Feature 2)
+    # =====================
+
+    @app.put("/api/recipes/{recipe_id}/tags", tags=["tags"])
+    def api_set_tags(
+        recipe_id: int,
+        req: TagsRequest,
+        authorization: str | None = Header(None),
+    ):
+        """레시피에 태그 설정 (본인만 가능)"""
+        user = _get_user(authorization)
+        recipe = db.get_recipe(recipe_id)
+        if not recipe or recipe.author_id != user.id:
+            raise HTTPException(403, "권한이 없습니다")
+        tags = db.set_recipe_tags(recipe_id, req.tags)
+        return {"success": True, "tags": tags}
+
+    @app.get("/api/recipes/{recipe_id}/tags", tags=["tags"])
+    def api_get_tags(recipe_id: int):
+        """레시피 태그 조회"""
+        return {"tags": db.get_recipe_tags(recipe_id)}
+
+    @app.get("/api/tags/{tag_name}/recipes", tags=["tags"])
+    def api_recipes_by_tag(tag_name: str, limit: int = Query(50, ge=1, le=100)):
+        """태그별 레시피 검색"""
+        recipes = db.find_recipes_by_tag(tag_name, limit=limit)
+        return {"tag": tag_name, "recipes": [_recipe_dict(r) for r in recipes], "count": len(recipes)}
+
+    @app.get("/api/tags/popular", tags=["tags"])
+    def api_popular_tags(limit: int = Query(20, ge=1, le=100)):
+        """인기 태그 목록"""
+        return {"tags": db.get_popular_tags(limit=limit)}
+
+    # =====================
+    # REPORT (Feature 4)
+    # =====================
+
+    @app.post("/api/reports", tags=["reports"])
+    def api_create_report(
+        req: ReportRequest,
+        authorization: str | None = Header(None),
+    ):
+        """레시피 또는 댓글 신고"""
+        user = _get_user(authorization)
+        try:
+            report = db.create_report(user.id, req.target_type, req.target_id, req.reason)
+            return {
+                "success": True,
+                "report": {
+                    "id": report.id,
+                    "target_type": report.target_type,
+                    "target_id": report.target_id,
+                    "status": report.status,
+                },
+            }
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @app.get("/api/reports", tags=["reports"])
+    def api_get_reports(
+        status: str = Query("pending", pattern="^(pending|reviewed|dismissed)$"),
+        limit: int = Query(50, ge=1, le=100),
+    ):
+        """신고 목록 조회 (관리용)"""
+        reports = db.get_reports(status=status, limit=limit)
+        return {
+            "reports": [
+                {"id": r.id, "reporter_id": r.reporter_id, "target_type": r.target_type,
+                 "target_id": r.target_id, "reason": r.reason, "status": r.status,
+                 "created_at": r.created_at}
+                for r in reports
+            ],
+            "count": len(reports),
+        }
+
+    # =====================
+    # FORK (Feature 5)
+    # =====================
+
+    @app.post("/api/recipes/{recipe_id}/fork", tags=["fork"])
+    def api_fork_recipe(
+        recipe_id: int,
+        req: ForkRequest,
+        authorization: str | None = Header(None),
+    ):
+        """레시피 포크(리믹스) — 다른 유저의 레시피를 기반으로 내 버전 생성"""
+        user = _get_user(authorization)
+        try:
+            forked = db.fork_recipe(recipe_id, user.id, title=req.title)
+            updated_user = db.get_user(user.id)
+            return {
+                "success": True,
+                "recipe": _recipe_dict(forked),
+                "forked_from": recipe_id,
+                "total_points": updated_user.points,
+            }
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    # =====================
+    # COOK LOG (Feature 7)
+    # =====================
+
+    @app.post("/api/recipes/{recipe_id}/cook-log", tags=["cook_log"])
+    def api_add_cook_log(
+        recipe_id: int,
+        req: CookLogRequest,
+        authorization: str | None = Header(None),
+    ):
+        """요리 완료 기록 (+2 포인트)"""
+        user = _get_user(authorization)
+        try:
+            log = db.add_cook_log(user.id, recipe_id, note=req.note, photo_url=req.photo_url)
+            updated_user = db.get_user(user.id)
+            return {
+                "success": True,
+                "cook_log": {"id": log.id, "recipe_id": log.recipe_id,
+                             "note": log.note, "created_at": log.created_at},
+                "points_earned": 2,
+                "total_points": updated_user.points,
+            }
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @app.get("/api/recipes/{recipe_id}/cook-logs", tags=["cook_log"])
+    def api_get_cook_logs(recipe_id: int, limit: int = Query(50, ge=1, le=100)):
+        """레시피의 요리 기록 목록"""
+        logs = db.get_cook_logs(recipe_id, limit=limit)
+        return {
+            "cook_logs": [
+                {"id": cl.id, "user_id": cl.user_id, "username": cl.username,
+                 "note": cl.note, "photo_url": cl.photo_url, "created_at": cl.created_at}
+                for cl in logs
+            ],
+            "count": len(logs),
+        }
+
+    @app.get("/api/users/{user_id}/cook-logs", tags=["cook_log"])
+    def api_user_cook_logs(user_id: int, limit: int = Query(50, ge=1, le=100)):
+        """유저의 요리 기록"""
+        logs = db.get_user_cook_logs(user_id, limit=limit)
+        return {
+            "cook_logs": [
+                {"id": cl.id, "recipe_id": cl.recipe_id, "note": cl.note,
+                 "photo_url": cl.photo_url, "created_at": cl.created_at}
+                for cl in logs
+            ],
+            "count": len(logs),
+        }
+
+    # =====================
+    # COLLECTIONS (Feature 8)
+    # =====================
+
+    @app.post("/api/collections", tags=["collections"])
+    def api_create_collection(
+        req: CollectionCreateRequest,
+        authorization: str | None = Header(None),
+    ):
+        """레시피 컬렉션 생성"""
+        user = _get_user(authorization)
+        try:
+            coll = db.create_collection(user.id, req.name, req.description)
+            return {"success": True, "collection": {"id": coll.id, "name": coll.name, "description": coll.description}}
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @app.get("/api/users/{user_id}/collections", tags=["collections"])
+    def api_user_collections(user_id: int):
+        """유저의 컬렉션 목록"""
+        colls = db.get_user_collections(user_id)
+        return {
+            "collections": [
+                {"id": c.id, "name": c.name, "description": c.description, "created_at": c.created_at}
+                for c in colls
+            ],
+        }
+
+    @app.delete("/api/collections/{collection_id}", tags=["collections"])
+    def api_delete_collection(
+        collection_id: int,
+        authorization: str | None = Header(None),
+    ):
+        """컬렉션 삭제 (본인만)"""
+        user = _get_user(authorization)
+        deleted = db.delete_collection(collection_id, user.id)
+        if not deleted:
+            raise HTTPException(404, "컬렉션을 찾을 수 없거나 권한이 없습니다")
+        return {"success": True}
+
+    @app.post("/api/collections/{collection_id}/recipes", tags=["collections"])
+    def api_add_to_collection(
+        collection_id: int,
+        req: CollectionAddRequest,
+        authorization: str | None = Header(None),
+    ):
+        """컬렉션에 레시피 추가"""
+        user = _get_user(authorization)
+        try:
+            db.add_to_collection(collection_id, req.recipe_id, user.id)
+            return {"success": True}
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @app.delete("/api/collections/{collection_id}/recipes/{recipe_id}", tags=["collections"])
+    def api_remove_from_collection(
+        collection_id: int,
+        recipe_id: int,
+        authorization: str | None = Header(None),
+    ):
+        """컬렉션에서 레시피 제거"""
+        user = _get_user(authorization)
+        removed = db.remove_from_collection(collection_id, recipe_id, user.id)
+        if not removed:
+            raise HTTPException(404, "컬렉션에서 레시피를 찾을 수 없습니다")
+        return {"success": True}
+
+    @app.get("/api/collections/{collection_id}/recipes", tags=["collections"])
+    def api_collection_recipes(collection_id: int):
+        """컬렉션의 레시피 목록"""
+        recipes = db.get_collection_recipes(collection_id)
+        return {"recipes": [_recipe_dict(r) for r in recipes], "count": len(recipes)}
+
+    # =====================
+    # NOTIFICATIONS (Feature 9)
+    # =====================
+
+    @app.get("/api/notifications", tags=["notifications"])
+    def api_get_notifications(
+        unread_only: bool = Query(False),
+        limit: int = Query(50, ge=1, le=100),
+        authorization: str | None = Header(None),
+    ):
+        """내 알림 목록"""
+        user = _get_user(authorization)
+        notifs = db.get_notifications(user.id, unread_only=unread_only, limit=limit)
+        return {
+            "notifications": [
+                {"id": n.id, "type": n.type, "message": n.message,
+                 "reference_id": n.reference_id, "is_read": n.is_read,
+                 "created_at": n.created_at}
+                for n in notifs
+            ],
+            "unread_count": db.get_unread_count(user.id),
+        }
+
+    @app.post("/api/notifications/read", tags=["notifications"])
+    def api_mark_read(
+        req: MarkReadRequest,
+        authorization: str | None = Header(None),
+    ):
+        """알림 읽음 처리 (ids 미지정 시 전체 읽음)"""
+        user = _get_user(authorization)
+        count = db.mark_notifications_read(user.id, req.notification_ids)
+        return {"success": True, "marked_count": count}
+
+    @app.get("/api/notifications/unread-count", tags=["notifications"])
+    def api_unread_count(authorization: str | None = Header(None)):
+        """읽지 않은 알림 수"""
+        user = _get_user(authorization)
+        return {"unread_count": db.get_unread_count(user.id)}
+
+    # =====================
+    # SHARE LINK (Feature 10)
+    # =====================
+
+    @app.post("/api/recipes/{recipe_id}/share", tags=["share"])
+    def api_create_share_link(recipe_id: int):
+        """레시피 공유 링크 생성"""
+        try:
+            link = db.create_share_link(recipe_id)
+            return {"success": True, "token": link.token, "view_count": link.view_count}
+        except ValueError as e:
+            raise HTTPException(404, str(e))
+
+    @app.get("/api/shared/{token}", tags=["share"])
+    def api_get_shared_recipe(token: str):
+        """공유 링크로 레시피 조회 (조회수 +1)"""
+        recipe = db.get_recipe_by_share_token(token)
+        if not recipe:
+            raise HTTPException(404, "공유 링크를 찾을 수 없습니다")
+        ingredients = db.get_recipe_ingredients(recipe.id)
+        tags = db.get_recipe_tags(recipe.id)
+        return {
+            **_recipe_dict(recipe),
+            "ingredients": [
+                {"name": i.name, "amount": i.amount, "unit": i.unit}
+                for i in ingredients
+            ],
+            "tags": tags,
+        }
+
+    # =====================
     # HEALTH
     # =====================
 
@@ -461,6 +846,9 @@ def create_app():
             "rating_avg": recipe.rating_avg,
             "rating_count": recipe.rating_count,
             "bookmark_count": recipe.bookmark_count,
+            "fork_count": recipe.fork_count,
+            "cook_count": recipe.cook_count,
+            "forked_from_id": recipe.forked_from_id,
             "created_at": recipe.created_at,
         }
 
