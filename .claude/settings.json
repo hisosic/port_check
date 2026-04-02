@@ -1,0 +1,107 @@
+{
+  "mcpServers": {
+    "orchestrator-code_analyzer": {
+      "command": "python",
+      "args": [
+        "-m",
+        "ai_orchestrator",
+        "--mcp-server",
+        "code_analyzer"
+      ],
+      "env": {}
+    },
+    "orchestrator-config_optimizer": {
+      "command": "python",
+      "args": [
+        "-m",
+        "ai_orchestrator",
+        "--mcp-server",
+        "config_optimizer"
+      ],
+      "env": {}
+    },
+    "orchestrator-context_engine": {
+      "command": "python",
+      "args": [
+        "-m",
+        "ai_orchestrator",
+        "--mcp-server",
+        "context_engine"
+      ],
+      "env": {}
+    },
+    "orchestrator-error_diagnostor": {
+      "command": "python",
+      "args": [
+        "-m",
+        "ai_orchestrator",
+        "--mcp-server",
+        "error_diagnostor"
+      ],
+      "env": {}
+    },
+    "orchestrator-mcp_connector": {
+      "command": "python",
+      "args": [
+        "-m",
+        "ai_orchestrator",
+        "--mcp-server",
+        "mcp_connector"
+      ],
+      "env": {}
+    },
+    "orchestrator-security_auditor": {
+      "command": "python",
+      "args": [
+        "-m",
+        "ai_orchestrator",
+        "--mcp-server",
+        "security_auditor"
+      ],
+      "env": {}
+    },
+    "orchestrator-skill_composer": {
+      "command": "python",
+      "args": [
+        "-m",
+        "ai_orchestrator",
+        "--mcp-server",
+        "skill_composer"
+      ],
+      "env": {}
+    },
+    "orchestrator-test_orchestrator": {
+      "command": "python",
+      "args": [
+        "-m",
+        "ai_orchestrator",
+        "--mcp-server",
+        "test_orchestrator"
+      ],
+      "env": {}
+    },
+    "orchestrator-workflow_coordinator": {
+      "command": "python",
+      "args": [
+        "-m",
+        "ai_orchestrator",
+        "--mcp-server",
+        "workflow_coordinator"
+      ],
+      "env": {}
+    }
+  },
+  "hooks": {
+    "PreCommit": [
+      {
+        "command": "python -m ai_orchestrator --run-agents security_auditor,test_orchestrator",
+        "description": "Auto-audit before commit"
+      }
+    ]
+  },
+  "permissions": {
+    "allow": [
+      "python -m ai_orchestrator*"
+    ]
+  }
+}
