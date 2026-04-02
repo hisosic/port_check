@@ -114,6 +114,48 @@ def create_app():
     class MarkReadRequest(BaseModel):
         notification_ids: list[int] | None = None
 
+    class ReplyCreateRequest(BaseModel):
+        content: str = Field(min_length=1, max_length=2000)
+
+    class ProfileUpdateRequest(BaseModel):
+        bio: str = Field(default="", max_length=500)
+        avatar_url: str = ""
+        website: str = ""
+
+    class RecipeImageRequest(BaseModel):
+        image_url: str = Field(min_length=1)
+        caption: str = ""
+        sort_order: int = 0
+
+    class NutritionRequest(BaseModel):
+        calories: int = Field(ge=0, default=0)
+        protein_g: float = Field(ge=0, default=0.0)
+        carbs_g: float = Field(ge=0, default=0.0)
+        fat_g: float = Field(ge=0, default=0.0)
+        fiber_g: float = Field(ge=0, default=0.0)
+        sodium_mg: float = Field(ge=0, default=0.0)
+
+    class StepInput(BaseModel):
+        title: str = ""
+        description: str = Field(min_length=1)
+        image_url: str = ""
+        timer_minutes: int = Field(ge=0, default=0)
+
+    class RecipeStepsRequest(BaseModel):
+        steps: list[StepInput] = Field(min_length=1)
+
+    class IngredientPriceRequest(BaseModel):
+        name: str = Field(min_length=1)
+        price: float = Field(ge=0)
+        unit: str = ""
+
+    class TimerInput(BaseModel):
+        label: str = Field(min_length=1)
+        duration_seconds: int = Field(gt=0)
+
+    class TimersRequest(BaseModel):
+        timers: list[TimerInput] = Field(min_length=1)
+
     # --- Auth helpers ---
 
     def _get_user(authorization: str | None) -> User:
@@ -232,6 +274,23 @@ def create_app():
     def api_weekly_popular_early(limit: int = Query(20, ge=1, le=100)):
         """주간 인기 레시피"""
         recipes = db.get_weekly_popular(limit=limit)
+        return {"recipes": [_recipe_dict(r) for r in recipes], "count": len(recipes)}
+
+    @app.get("/api/recipes/filter", tags=["recipes"])
+    def api_filter_recipes(
+        difficulty: str | None = Query(None, pattern="^(easy|medium|hard)$"),
+        max_time: int | None = Query(None, ge=0),
+        min_rating: float | None = Query(None, ge=0, le=5),
+        tag: str | None = Query(None),
+        sort: str = Query("recent", pattern="^(recent|popular|rating|cooking_time|most_cooked|most_forked)$"),
+        offset: int = Query(0, ge=0),
+        limit: int = Query(20, ge=1, le=100),
+    ):
+        """고급 레시피 필터 (난이도, 시간, 평점, 태그, 정렬)"""
+        recipes = db.filter_recipes(
+            difficulty=difficulty, max_time=max_time, min_rating=min_rating,
+            tag=tag, sort_by=sort, offset=offset, limit=limit,
+        )
         return {"recipes": [_recipe_dict(r) for r in recipes], "count": len(recipes)}
 
     @app.get("/api/recipes/{recipe_id}", tags=["recipes"])
@@ -821,6 +880,234 @@ def create_app():
         }
 
     # =====================
+    # REPLIES (Feature 11)
+    # =====================
+
+    @app.post("/api/comments/{comment_id}/replies", tags=["comments"])
+    def api_add_reply(
+        comment_id: int,
+        req: ReplyCreateRequest,
+        authorization: str | None = Header(None),
+    ):
+        """댓글에 답글 작성 (+1 포인트)"""
+        user = _get_user(authorization)
+        try:
+            reply = db.add_reply(comment_id, user.id, req.content)
+            return {"success": True, "reply": _comment_dict(reply), "points_earned": 1}
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @app.get("/api/comments/{comment_id}/replies", tags=["comments"])
+    def api_get_replies(comment_id: int):
+        """댓글의 답글 목록"""
+        replies = db.get_replies(comment_id)
+        return {"replies": [_comment_dict(r) for r in replies], "count": len(replies)}
+
+    # =====================
+    # USER PROFILE (Feature 12)
+    # =====================
+
+    @app.put("/api/profile", tags=["profile"])
+    def api_update_profile(
+        req: ProfileUpdateRequest,
+        authorization: str | None = Header(None),
+    ):
+        """내 프로필 수정"""
+        user = _get_user(authorization)
+        profile = db.update_profile(user.id, bio=req.bio, avatar_url=req.avatar_url, website=req.website)
+        return {"success": True, "profile": {"bio": profile.bio, "avatar_url": profile.avatar_url, "website": profile.website}}
+
+    @app.get("/api/users/{user_id}/profile", tags=["profile"])
+    def api_get_user_detail(user_id: int):
+        """유저 상세 프로필 조회 (배지, 팔로워 수 포함)"""
+        detail = db.get_user_detail(user_id)
+        if not detail:
+            raise HTTPException(404, "유저를 찾을 수 없습니다")
+        return detail
+
+    # =====================
+    # RECIPE IMAGES (Feature 13)
+    # =====================
+
+    @app.post("/api/recipes/{recipe_id}/images", tags=["images"])
+    def api_add_image(
+        recipe_id: int,
+        req: RecipeImageRequest,
+        authorization: str | None = Header(None),
+    ):
+        """레시피에 이미지 추가 (본인만)"""
+        user = _get_user(authorization)
+        recipe = db.get_recipe(recipe_id)
+        if not recipe or recipe.author_id != user.id:
+            raise HTTPException(403, "권한이 없습니다")
+        try:
+            img = db.add_recipe_image(recipe_id, req.image_url, req.caption, req.sort_order)
+            return {"success": True, "image": {"id": img.id, "image_url": img.image_url, "caption": img.caption}}
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @app.get("/api/recipes/{recipe_id}/images", tags=["images"])
+    def api_get_images(recipe_id: int):
+        """레시피 이미지 목록"""
+        images = db.get_recipe_images(recipe_id)
+        return {"images": [{"id": i.id, "image_url": i.image_url, "caption": i.caption, "sort_order": i.sort_order} for i in images]}
+
+    @app.delete("/api/images/{image_id}", tags=["images"])
+    def api_delete_image(image_id: int, authorization: str | None = Header(None)):
+        """이미지 삭제 (레시피 작성자만)"""
+        user = _get_user(authorization)
+        if not db.delete_recipe_image(image_id, user.id):
+            raise HTTPException(404, "이미지를 찾을 수 없거나 권한이 없습니다")
+        return {"success": True}
+
+    # =====================
+    # NUTRITION (Feature 14)
+    # =====================
+
+    @app.put("/api/recipes/{recipe_id}/nutrition", tags=["nutrition"])
+    def api_set_nutrition(
+        recipe_id: int,
+        req: NutritionRequest,
+        authorization: str | None = Header(None),
+    ):
+        """레시피 영양 정보 설정 (본인만)"""
+        user = _get_user(authorization)
+        recipe = db.get_recipe(recipe_id)
+        if not recipe or recipe.author_id != user.id:
+            raise HTTPException(403, "권한이 없습니다")
+        info = db.set_nutrition(recipe_id, calories=req.calories, protein_g=req.protein_g,
+                                carbs_g=req.carbs_g, fat_g=req.fat_g,
+                                fiber_g=req.fiber_g, sodium_mg=req.sodium_mg)
+        return {"success": True, "nutrition": {
+            "calories": info.calories, "protein_g": info.protein_g, "carbs_g": info.carbs_g,
+            "fat_g": info.fat_g, "fiber_g": info.fiber_g, "sodium_mg": info.sodium_mg,
+        }}
+
+    @app.get("/api/recipes/{recipe_id}/nutrition", tags=["nutrition"])
+    def api_get_nutrition(recipe_id: int):
+        """레시피 영양 정보 조회"""
+        info = db.get_nutrition(recipe_id)
+        if not info:
+            return {"nutrition": None}
+        return {"nutrition": {
+            "calories": info.calories, "protein_g": info.protein_g, "carbs_g": info.carbs_g,
+            "fat_g": info.fat_g, "fiber_g": info.fiber_g, "sodium_mg": info.sodium_mg,
+        }}
+
+    # =====================
+    # RECIPE STEPS (Feature 15)
+    # =====================
+
+    @app.put("/api/recipes/{recipe_id}/steps", tags=["steps"])
+    def api_set_steps(
+        recipe_id: int,
+        req: RecipeStepsRequest,
+        authorization: str | None = Header(None),
+    ):
+        """레시피 조리 단계 설정 (본인만)"""
+        user = _get_user(authorization)
+        recipe = db.get_recipe(recipe_id)
+        if not recipe or recipe.author_id != user.id:
+            raise HTTPException(403, "권한이 없습니다")
+        steps = db.set_recipe_steps(recipe_id, [s.model_dump() for s in req.steps])
+        return {"success": True, "steps": [
+            {"step_number": s.step_number, "title": s.title, "description": s.description,
+             "image_url": s.image_url, "timer_minutes": s.timer_minutes}
+            for s in steps
+        ]}
+
+    @app.get("/api/recipes/{recipe_id}/steps", tags=["steps"])
+    def api_get_steps(recipe_id: int):
+        """레시피 조리 단계 조회"""
+        steps = db.get_recipe_steps(recipe_id)
+        return {"steps": [
+            {"step_number": s.step_number, "title": s.title, "description": s.description,
+             "image_url": s.image_url, "timer_minutes": s.timer_minutes}
+            for s in steps
+        ]}
+
+    # =====================
+    # INGREDIENT PRICES (Feature 16)
+    # =====================
+
+    @app.post("/api/ingredient-prices", tags=["prices"])
+    def api_set_price(req: IngredientPriceRequest):
+        """식재료 가격 등록/수정"""
+        try:
+            p = db.set_ingredient_price(req.name, req.price, req.unit)
+            return {"success": True, "ingredient": {"name": p.name, "price": p.price, "unit": p.unit}}
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @app.get("/api/recipes/{recipe_id}/cost", tags=["prices"])
+    def api_estimate_cost(recipe_id: int):
+        """레시피 예상 비용 산출"""
+        return db.estimate_recipe_cost(recipe_id)
+
+    # =====================
+    # BADGES (Feature 17)
+    # =====================
+
+    @app.get("/api/badges", tags=["badges"])
+    def api_all_badges():
+        """전체 배지 목록"""
+        badges = db.get_all_badges()
+        return {"badges": [{"code": b.code, "name": b.name, "description": b.description, "icon": b.icon} for b in badges]}
+
+    @app.get("/api/users/{user_id}/badges", tags=["badges"])
+    def api_user_badges(user_id: int):
+        """유저 획득 배지 목록"""
+        badges = db.get_user_badges(user_id)
+        return {"badges": [{"code": b.badge_code, "name": b.badge_name, "earned_at": b.earned_at} for b in badges]}
+
+    @app.post("/api/badges/check", tags=["badges"])
+    def api_check_badges(authorization: str | None = Header(None)):
+        """내 배지 조건 확인 및 자동 수여"""
+        user = _get_user(authorization)
+        awarded = db.check_and_award_badges(user.id)
+        return {"newly_awarded": awarded, "total_badges": len(db.get_user_badges(user.id))}
+
+    # =====================
+    # RECOMMENDATIONS (Feature 18)
+    # =====================
+
+    @app.get("/api/recipes/{recipe_id}/similar", tags=["recommendations"])
+    def api_similar_recipes(recipe_id: int, limit: int = Query(10, ge=1, le=50)):
+        """비슷한 레시피 추천 (재료 기반)"""
+        recipes = db.get_similar_recipes(recipe_id, limit=limit)
+        return {"recipes": [_recipe_dict(r) for r in recipes], "count": len(recipes)}
+
+    # =====================
+    # COOKING TIMERS (Feature 20)
+    # =====================
+
+    @app.put("/api/recipes/{recipe_id}/timers", tags=["timers"])
+    def api_set_timers(
+        recipe_id: int,
+        req: TimersRequest,
+        authorization: str | None = Header(None),
+    ):
+        """레시피 쿠킹 타이머 설정 (본인만)"""
+        user = _get_user(authorization)
+        recipe = db.get_recipe(recipe_id)
+        if not recipe or recipe.author_id != user.id:
+            raise HTTPException(403, "권한이 없습니다")
+        timers = db.set_cooking_timers(recipe_id, [t.model_dump() for t in req.timers])
+        return {"success": True, "timers": [
+            {"label": t.label, "duration_seconds": t.duration_seconds, "sort_order": t.sort_order}
+            for t in timers
+        ]}
+
+    @app.get("/api/recipes/{recipe_id}/timers", tags=["timers"])
+    def api_get_timers(recipe_id: int):
+        """레시피 쿠킹 타이머 조회"""
+        timers = db.get_cooking_timers(recipe_id)
+        return {"timers": [
+            {"label": t.label, "duration_seconds": t.duration_seconds, "sort_order": t.sort_order}
+            for t in timers
+        ]}
+
+    # =====================
     # HEALTH
     # =====================
 
@@ -859,6 +1146,7 @@ def create_app():
             "user_id": comment.user_id,
             "username": comment.username,
             "content": comment.content,
+            "parent_id": comment.parent_id,
             "created_at": comment.created_at,
             "updated_at": comment.updated_at,
         }
