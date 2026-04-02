@@ -202,6 +202,7 @@ def create_app():
         user = _get_optional_user(authorization)
         liked = db.is_liked(user.id, recipe_id) if user else False
         my_rating = db.get_user_rating(recipe_id, user.id) if user else None
+        bookmarked = db.is_bookmarked(user.id, recipe_id) if user else False
         return {
             **_recipe_dict(recipe),
             "ingredients": [
@@ -210,6 +211,7 @@ def create_app():
             ],
             "liked_by_me": liked,
             "my_rating": my_rating,
+            "bookmarked_by_me": bookmarked,
         }
 
     @app.delete("/api/recipes/{recipe_id}", tags=["recipes"])
@@ -349,6 +351,29 @@ def create_app():
         return db.get_recipe_ratings(recipe_id)
 
     # =====================
+    # BOOKMARKS
+    # =====================
+
+    @app.post("/api/recipes/{recipe_id}/bookmark", tags=["bookmarks"])
+    def api_toggle_bookmark(
+        recipe_id: int,
+        authorization: str | None = Header(None),
+    ):
+        """레시피 북마크 토글 (북마크 → 해제, 해제 → 북마크)"""
+        user = _get_user(authorization)
+        try:
+            result = db.toggle_bookmark(user.id, recipe_id)
+            return {"success": True, **result}
+        except ValueError as e:
+            raise HTTPException(404, str(e))
+
+    @app.get("/api/users/{user_id}/bookmarks", tags=["bookmarks"])
+    def api_user_bookmarks(user_id: int):
+        """유저가 북마크한 레시피 목록"""
+        recipes = db.get_user_bookmarks(user_id)
+        return {"recipes": [_recipe_dict(r) for r in recipes], "count": len(recipes)}
+
+    # =====================
     # LIKE / UNLIKE
     # =====================
 
@@ -435,6 +460,7 @@ def create_app():
             "comment_count": recipe.comment_count,
             "rating_avg": recipe.rating_avg,
             "rating_count": recipe.rating_count,
+            "bookmark_count": recipe.bookmark_count,
             "created_at": recipe.created_at,
         }
 

@@ -38,6 +38,7 @@ class Recipe:
     comment_count: int = 0
     rating_avg: float = 0.0
     rating_count: int = 0
+    bookmark_count: int = 0
     created_at: float = 0.0
     author_name: str = ""  # joined field
 
@@ -75,6 +76,14 @@ class PointHistory:
     user_id: int = 0
     amount: int = 0
     reason: str = ""
+    created_at: float = 0.0
+
+
+@dataclass
+class Bookmark:
+    id: int = 0
+    user_id: int = 0
+    recipe_id: int = 0
     created_at: float = 0.0
 
 
@@ -151,6 +160,7 @@ class Database:
                 comment_count INTEGER DEFAULT 0,
                 rating_avg REAL DEFAULT 0.0,
                 rating_count INTEGER DEFAULT 0,
+                bookmark_count INTEGER DEFAULT 0,
                 created_at REAL DEFAULT (strftime('%s', 'now')),
                 FOREIGN KEY (author_id) REFERENCES users(id)
             );
@@ -215,6 +225,19 @@ class Database:
             );
 
             CREATE INDEX IF NOT EXISTS idx_ratings_recipe ON ratings(recipe_id);
+
+            CREATE TABLE IF NOT EXISTS bookmarks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                recipe_id INTEGER NOT NULL,
+                created_at REAL DEFAULT (strftime('%s', 'now')),
+                UNIQUE(user_id, recipe_id),
+                FOREIGN KEY (user_id) REFERENCES users(id),
+                FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_bookmarks_user ON bookmarks(user_id);
+            CREATE INDEX IF NOT EXISTS idx_bookmarks_recipe ON bookmarks(recipe_id);
         """)
         conn.commit()
         conn.close()
@@ -764,3 +787,67 @@ class Database:
             "count": total["cnt"],
             "distribution": distribution,
         }
+
+    # --- Bookmark operations ---
+
+    def toggle_bookmark(self, user_id: int, recipe_id: int) -> dict[str, Any]:
+        """Toggle bookmark on a recipe. Returns new bookmark status and count."""
+        recipe = self.get_recipe(recipe_id)
+        if not recipe:
+            raise ValueError("레시피를 찾을 수 없습니다")
+
+        conn = self._get_conn()
+        existing = conn.execute(
+            "SELECT id FROM bookmarks WHERE user_id = ? AND recipe_id = ?",
+            (user_id, recipe_id),
+        ).fetchone()
+
+        if existing:
+            conn.execute("DELETE FROM bookmarks WHERE user_id = ? AND recipe_id = ?",
+                         (user_id, recipe_id))
+            conn.execute("UPDATE recipes SET bookmark_count = MAX(0, bookmark_count - 1) WHERE id = ?",
+                         (recipe_id,))
+            conn.commit()
+            new_count = conn.execute(
+                "SELECT bookmark_count FROM recipes WHERE id = ?", (recipe_id,)
+            ).fetchone()["bookmark_count"]
+            conn.close()
+            return {"bookmarked": False, "bookmark_count": new_count}
+        else:
+            now = time.time()
+            conn.execute(
+                "INSERT INTO bookmarks (user_id, recipe_id, created_at) VALUES (?, ?, ?)",
+                (user_id, recipe_id, now),
+            )
+            conn.execute("UPDATE recipes SET bookmark_count = bookmark_count + 1 WHERE id = ?",
+                         (recipe_id,))
+            conn.commit()
+            new_count = conn.execute(
+                "SELECT bookmark_count FROM recipes WHERE id = ?", (recipe_id,)
+            ).fetchone()["bookmark_count"]
+            conn.close()
+            return {"bookmarked": True, "bookmark_count": new_count}
+
+    def is_bookmarked(self, user_id: int, recipe_id: int) -> bool:
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT id FROM bookmarks WHERE user_id = ? AND recipe_id = ?",
+            (user_id, recipe_id),
+        ).fetchone()
+        conn.close()
+        return row is not None
+
+    def get_user_bookmarks(self, user_id: int) -> list[Recipe]:
+        """Get all bookmarked recipes for a user, newest first."""
+        conn = self._get_conn()
+        rows = conn.execute(
+            """SELECT r.*, u.username as author_name
+               FROM bookmarks b
+               JOIN recipes r ON b.recipe_id = r.id
+               JOIN users u ON r.author_id = u.id
+               WHERE b.user_id = ?
+               ORDER BY b.created_at DESC""",
+            (user_id,),
+        ).fetchall()
+        conn.close()
+        return [Recipe(**dict(r)) for r in rows]
