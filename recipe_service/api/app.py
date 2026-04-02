@@ -156,6 +156,64 @@ def create_app():
     class TimersRequest(BaseModel):
         timers: list[TimerInput] = Field(min_length=1)
 
+    class MealPlanRequest(BaseModel):
+        date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+        meal_type: str = Field(pattern="^(breakfast|lunch|dinner|snack)$")
+        recipe_id: int
+        note: str = ""
+
+    class ShoppingItemRequest(BaseModel):
+        name: str = Field(min_length=1)
+        amount: str = ""
+        unit: str = ""
+
+    class QAQuestionRequest(BaseModel):
+        question: str = Field(min_length=1, max_length=1000)
+
+    class QAAnswerRequest(BaseModel):
+        answer: str = Field(min_length=1, max_length=2000)
+
+    class AllergensRequest(BaseModel):
+        allergens: list[str] = Field(min_length=1)
+
+    class DifficultyVoteRequest(BaseModel):
+        vote: str = Field(pattern="^(easy|medium|hard)$")
+
+    class SubstitutionRequest(BaseModel):
+        original: str = Field(min_length=1)
+        substitute: str = Field(min_length=1)
+        note: str = ""
+
+    class ChallengeCreateRequest(BaseModel):
+        title: str = Field(min_length=1)
+        description: str = ""
+        ingredient: str = ""
+        start_date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+        end_date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+
+    class ChallengeEntryRequest(BaseModel):
+        recipe_id: int
+
+    class PollCreateRequest(BaseModel):
+        question: str = Field(min_length=1)
+        options: list[str] = Field(min_length=2, max_length=10)
+
+    class PollVoteRequest(BaseModel):
+        option_id: int
+
+    class TipRequest(BaseModel):
+        content: str = Field(min_length=1, max_length=1000)
+
+    class SeasonRequest(BaseModel):
+        season: str = Field(pattern="^(spring|summer|fall|winter|all)$")
+
+    class BookmarkTagRequest(BaseModel):
+        name: str = Field(min_length=1, max_length=50)
+
+    class BookmarkTagAssignRequest(BaseModel):
+        recipe_id: int
+        tag_id: int
+
     # --- Auth helpers ---
 
     def _get_user(authorization: str | None) -> User:
@@ -292,6 +350,27 @@ def create_app():
             tag=tag, sort_by=sort, offset=offset, limit=limit,
         )
         return {"recipes": [_recipe_dict(r) for r in recipes], "count": len(recipes)}
+
+    @app.get("/api/recipes/compare", tags=["compare"])
+    def api_compare_early(a: int = Query(...), b: int = Query(...)):
+        """두 레시피 비교"""
+        try:
+            return db.compare_recipes(a, b)
+        except ValueError as e:
+            raise HTTPException(404, str(e))
+
+    @app.get("/api/recipes/allergy-free", tags=["allergy"])
+    def api_allergy_free_early(exclude: str = Query(...), limit: int = Query(50, ge=1, le=100)):
+        """특정 알레르기 제외 레시피"""
+        allergens = [a.strip() for a in exclude.split(",") if a.strip()]
+        recipes = db.find_recipes_without_allergens(allergens, limit=limit)
+        return {"excluded": allergens, "recipes": [_recipe_dict(r) for r in recipes], "count": len(recipes)}
+
+    @app.get("/api/recipes/seasonal/{season}", tags=["season"])
+    def api_seasonal_early(season: str, limit: int = Query(50, ge=1, le=100)):
+        """계절별 레시피"""
+        recipes = db.get_seasonal_recipes(season, limit=limit)
+        return {"season": season, "recipes": [_recipe_dict(r) for r in recipes], "count": len(recipes)}
 
     @app.get("/api/recipes/{recipe_id}", tags=["recipes"])
     def api_get_recipe(
@@ -1108,6 +1187,438 @@ def create_app():
         ]}
 
     # =====================
+    # MEAL PLANNER (Feature 21)
+    # =====================
+
+    @app.post("/api/meal-plans", tags=["meal_plan"])
+    def api_set_meal_plan(req: MealPlanRequest, authorization: str | None = Header(None)):
+        """식단 계획 설정"""
+        user = _get_user(authorization)
+        try:
+            plan = db.set_meal_plan(user.id, req.date, req.meal_type, req.recipe_id, req.note)
+            return {"success": True, "meal_plan": {"date": plan.date, "meal_type": plan.meal_type, "recipe_id": plan.recipe_id}}
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @app.get("/api/meal-plans", tags=["meal_plan"])
+    def api_get_meal_plans(
+        start: str = Query(..., pattern=r"^\d{4}-\d{2}-\d{2}$"),
+        end: str = Query(..., pattern=r"^\d{4}-\d{2}-\d{2}$"),
+        authorization: str | None = Header(None),
+    ):
+        """기간별 식단 계획 조회"""
+        user = _get_user(authorization)
+        plans = db.get_meal_plans(user.id, start, end)
+        return {"meal_plans": [{"date": p.date, "meal_type": p.meal_type, "recipe_id": p.recipe_id, "note": p.note} for p in plans]}
+
+    @app.delete("/api/meal-plans", tags=["meal_plan"])
+    def api_delete_meal_plan(
+        date: str = Query(..., pattern=r"^\d{4}-\d{2}-\d{2}$"),
+        meal_type: str = Query(..., pattern="^(breakfast|lunch|dinner|snack)$"),
+        authorization: str | None = Header(None),
+    ):
+        """식단 계획 삭제"""
+        user = _get_user(authorization)
+        db.delete_meal_plan(user.id, date, meal_type)
+        return {"success": True}
+
+    # =====================
+    # SHOPPING LIST (Feature 22)
+    # =====================
+
+    @app.post("/api/shopping-list", tags=["shopping"])
+    def api_add_shopping_item(req: ShoppingItemRequest, authorization: str | None = Header(None)):
+        """장바구니에 항목 추가"""
+        user = _get_user(authorization)
+        item = db.add_shopping_item(user.id, req.name, req.amount, req.unit)
+        return {"success": True, "item": {"id": item.id, "name": item.name}}
+
+    @app.post("/api/shopping-list/from-recipe/{recipe_id}", tags=["shopping"])
+    def api_add_recipe_to_shopping(recipe_id: int, authorization: str | None = Header(None)):
+        """레시피 재료를 장바구니에 일괄 추가"""
+        user = _get_user(authorization)
+        try:
+            items = db.add_recipe_to_shopping(user.id, recipe_id)
+            return {"success": True, "added_count": len(items)}
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @app.get("/api/shopping-list", tags=["shopping"])
+    def api_get_shopping_list(authorization: str | None = Header(None)):
+        """내 장바구니 목록"""
+        user = _get_user(authorization)
+        items = db.get_shopping_list(user.id)
+        return {"items": [{"id": i.id, "name": i.name, "amount": i.amount, "unit": i.unit, "checked": i.checked} for i in items]}
+
+    @app.post("/api/shopping-list/{item_id}/toggle", tags=["shopping"])
+    def api_toggle_shopping(item_id: int, authorization: str | None = Header(None)):
+        """장바구니 항목 체크/해제"""
+        user = _get_user(authorization)
+        db.toggle_shopping_item(item_id, user.id)
+        return {"success": True}
+
+    @app.delete("/api/shopping-list/{item_id}", tags=["shopping"])
+    def api_delete_shopping_item(item_id: int, authorization: str | None = Header(None)):
+        """장바구니 항목 삭제"""
+        user = _get_user(authorization)
+        db.delete_shopping_item(item_id, user.id)
+        return {"success": True}
+
+    @app.delete("/api/shopping-list", tags=["shopping"])
+    def api_clear_shopping(checked_only: bool = Query(False), authorization: str | None = Header(None)):
+        """장바구니 비우기"""
+        user = _get_user(authorization)
+        count = db.clear_shopping_list(user.id, checked_only=checked_only)
+        return {"success": True, "removed_count": count}
+
+    # =====================
+    # BLOCK USER (Feature 23)
+    # =====================
+
+    @app.post("/api/users/{user_id}/block", tags=["block"])
+    def api_block_user(user_id: int, authorization: str | None = Header(None)):
+        """유저 차단"""
+        me = _get_user(authorization)
+        try:
+            return {"success": True, **db.block_user(me.id, user_id)}
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @app.delete("/api/users/{user_id}/block", tags=["block"])
+    def api_unblock_user(user_id: int, authorization: str | None = Header(None)):
+        """유저 차단 해제"""
+        me = _get_user(authorization)
+        db.unblock_user(me.id, user_id)
+        return {"success": True}
+
+    @app.get("/api/blocked-users", tags=["block"])
+    def api_blocked_users(authorization: str | None = Header(None)):
+        """차단 목록"""
+        user = _get_user(authorization)
+        users = db.get_blocked_users(user.id)
+        return {"blocked": [{"id": u.id, "username": u.username} for u in users]}
+
+    # =====================
+    # RECIPE Q&A (Feature 24)
+    # =====================
+
+    @app.post("/api/recipes/{recipe_id}/qa", tags=["qa"])
+    def api_ask_question(recipe_id: int, req: QAQuestionRequest, authorization: str | None = Header(None)):
+        """레시피에 질문"""
+        user = _get_user(authorization)
+        try:
+            qa = db.ask_question(recipe_id, user.id, req.question)
+            return {"success": True, "qa": {"id": qa.id, "question": qa.question}}
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @app.post("/api/qa/{qa_id}/answer", tags=["qa"])
+    def api_answer_question(qa_id: int, req: QAAnswerRequest, authorization: str | None = Header(None)):
+        """질문에 답변 (+2 포인트)"""
+        user = _get_user(authorization)
+        try:
+            qa = db.answer_question(qa_id, user.id, req.answer)
+            if not qa:
+                raise HTTPException(404, "질문을 찾을 수 없습니다")
+            return {"success": True, "qa": {"id": qa.id, "answer": qa.answer}}
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @app.get("/api/recipes/{recipe_id}/qa", tags=["qa"])
+    def api_get_qa(recipe_id: int):
+        """레시피 Q&A 목록"""
+        qas = db.get_recipe_qa(recipe_id)
+        return {"qa": [{"id": q.id, "question": q.question, "answer": q.answer,
+                         "username": q.username, "answered_at": q.answered_at} for q in qas]}
+
+    # =====================
+    # SEASONAL RECIPES (Feature 25)
+    # =====================
+
+    @app.put("/api/recipes/{recipe_id}/season", tags=["season"])
+    def api_set_season(recipe_id: int, req: SeasonRequest, authorization: str | None = Header(None)):
+        """레시피 계절 설정"""
+        user = _get_user(authorization)
+        recipe = db.get_recipe(recipe_id)
+        if not recipe or recipe.author_id != user.id:
+            raise HTTPException(403, "권한이 없습니다")
+        db.set_recipe_season(recipe_id, req.season)
+        return {"success": True, "season": req.season}
+
+    # =====================
+    # ALLERGY INFO (Feature 26)
+    # =====================
+
+    @app.put("/api/recipes/{recipe_id}/allergens", tags=["allergy"])
+    def api_set_allergens(recipe_id: int, req: AllergensRequest, authorization: str | None = Header(None)):
+        """레시피 알레르기 정보 설정"""
+        user = _get_user(authorization)
+        recipe = db.get_recipe(recipe_id)
+        if not recipe or recipe.author_id != user.id:
+            raise HTTPException(403, "권한이 없습니다")
+        allergens = db.set_allergens(recipe_id, req.allergens)
+        return {"success": True, "allergens": allergens}
+
+    @app.get("/api/recipes/{recipe_id}/allergens", tags=["allergy"])
+    def api_get_allergens(recipe_id: int):
+        """레시피 알레르기 정보"""
+        return {"allergens": db.get_allergens(recipe_id)}
+
+    # =====================
+    # DIFFICULTY VOTE (Feature 27)
+    # =====================
+
+    @app.post("/api/recipes/{recipe_id}/difficulty-vote", tags=["difficulty"])
+    def api_vote_difficulty(recipe_id: int, req: DifficultyVoteRequest, authorization: str | None = Header(None)):
+        """레시피 체감 난이도 투표"""
+        user = _get_user(authorization)
+        result = db.vote_difficulty(recipe_id, user.id, req.vote)
+        return {"success": True, **result}
+
+    @app.get("/api/recipes/{recipe_id}/difficulty-votes", tags=["difficulty"])
+    def api_get_difficulty_votes(recipe_id: int):
+        """레시피 난이도 투표 현황"""
+        return db.get_difficulty_votes(recipe_id)
+
+    # =====================
+    # USER STATS (Feature 29)
+    # =====================
+
+    @app.get("/api/users/{user_id}/stats", tags=["stats"])
+    def api_user_stats(user_id: int):
+        """유저 활동 통계 대시보드"""
+        return db.get_user_stats(user_id)
+
+    # =====================
+    # VIEW HISTORY (Feature 30)
+    # =====================
+
+    @app.post("/api/recipes/{recipe_id}/view", tags=["history"])
+    def api_record_view(recipe_id: int, authorization: str | None = Header(None)):
+        """레시피 조회 기록"""
+        user = _get_optional_user(authorization)
+        if user:
+            db.record_view(user.id, recipe_id)
+        return {"success": True}
+
+    @app.get("/api/view-history", tags=["history"])
+    def api_view_history(limit: int = Query(50, ge=1, le=100), authorization: str | None = Header(None)):
+        """최근 본 레시피"""
+        user = _get_user(authorization)
+        history = db.get_view_history(user.id, limit=limit)
+        return {"history": history}
+
+    # =====================
+    # INGREDIENT SUBSTITUTION (Feature 31)
+    # =====================
+
+    @app.post("/api/ingredient-subs", tags=["substitution"])
+    def api_add_sub(req: SubstitutionRequest):
+        """대체 재료 등록"""
+        try:
+            sub = db.add_substitution(req.original, req.substitute, req.note)
+            return {"success": True, "substitution": {"original": sub.original, "substitute": sub.substitute}}
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @app.get("/api/ingredient-subs/{ingredient}", tags=["substitution"])
+    def api_get_subs(ingredient: str):
+        """재료의 대체 목록"""
+        subs = db.get_substitutions(ingredient)
+        return {"ingredient": ingredient, "substitutes": [{"substitute": s.substitute, "note": s.note} for s in subs]}
+
+    # =====================
+    # COOKING CHALLENGE (Feature 32)
+    # =====================
+
+    @app.post("/api/challenges", tags=["challenge"])
+    def api_create_challenge(req: ChallengeCreateRequest, authorization: str | None = Header(None)):
+        """쿠킹 챌린지 생성"""
+        _get_user(authorization)
+        try:
+            ch = db.create_challenge(req.title, req.description, req.ingredient, req.start_date, req.end_date)
+            return {"success": True, "challenge": {"id": ch.id, "title": ch.title}}
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @app.post("/api/challenges/{challenge_id}/enter", tags=["challenge"])
+    def api_enter_challenge(challenge_id: int, req: ChallengeEntryRequest, authorization: str | None = Header(None)):
+        """챌린지 참여 (+5 포인트)"""
+        user = _get_user(authorization)
+        try:
+            return {"success": True, **db.enter_challenge(challenge_id, user.id, req.recipe_id)}
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @app.get("/api/challenges/{challenge_id}/entries", tags=["challenge"])
+    def api_challenge_entries(challenge_id: int):
+        """챌린지 참여 목록"""
+        return {"entries": db.get_challenge_entries(challenge_id)}
+
+    @app.get("/api/challenges/active", tags=["challenge"])
+    def api_active_challenges():
+        """진행 중인 챌린지"""
+        chs = db.get_active_challenges()
+        return {"challenges": [{"id": c.id, "title": c.title, "description": c.description,
+                                 "ingredient": c.ingredient, "end_date": c.end_date} for c in chs]}
+
+    # =====================
+    # POLLS (Feature 33)
+    # =====================
+
+    @app.post("/api/recipes/{recipe_id}/polls", tags=["polls"])
+    def api_create_poll(recipe_id: int, req: PollCreateRequest, authorization: str | None = Header(None)):
+        """레시피 투표 생성"""
+        user = _get_user(authorization)
+        try:
+            return {"success": True, **db.create_poll(recipe_id, user.id, req.question, req.options)}
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @app.post("/api/polls/{poll_id}/vote", tags=["polls"])
+    def api_vote_poll(poll_id: int, req: PollVoteRequest, authorization: str | None = Header(None)):
+        """투표하기"""
+        user = _get_user(authorization)
+        try:
+            return {"success": True, **db.vote_poll(poll_id, req.option_id, user.id)}
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @app.get("/api/polls/{poll_id}", tags=["polls"])
+    def api_get_poll(poll_id: int):
+        """투표 현황 조회"""
+        poll = db.get_poll(poll_id)
+        if not poll:
+            raise HTTPException(404, "투표를 찾을 수 없습니다")
+        return poll
+
+    # =====================
+    # USER LEVEL (Feature 34)
+    # =====================
+
+    @app.get("/api/users/{user_id}/level", tags=["level"])
+    def api_user_level(user_id: int):
+        """유저 레벨 조회"""
+        try:
+            return db.get_user_level(user_id)
+        except ValueError as e:
+            raise HTTPException(404, str(e))
+
+    # =====================
+    # RECIPE TIPS (Feature 35)
+    # =====================
+
+    @app.post("/api/recipes/{recipe_id}/tips", tags=["tips"])
+    def api_add_tip(recipe_id: int, req: TipRequest, authorization: str | None = Header(None)):
+        """레시피 꿀팁 작성"""
+        user = _get_user(authorization)
+        try:
+            tip = db.add_recipe_tip(recipe_id, user.id, req.content)
+            return {"success": True, "tip": {"id": tip.id, "content": tip.content}}
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @app.get("/api/recipes/{recipe_id}/tips", tags=["tips"])
+    def api_get_tips(recipe_id: int):
+        """레시피 꿀팁 목록"""
+        tips = db.get_recipe_tips(recipe_id)
+        return {"tips": [{"id": t.id, "username": t.username, "content": t.content, "created_at": t.created_at} for t in tips]}
+
+    # =====================
+    # EXPORT (Feature 36)
+    # =====================
+
+    @app.get("/api/recipes/{recipe_id}/export", tags=["export"])
+    def api_export_recipe(recipe_id: int, format: str = Query("json", pattern="^(json|text)$")):
+        """레시피 내보내기 (JSON/텍스트)"""
+        try:
+            return {"export": db.export_recipe(recipe_id, format=format)}
+        except ValueError as e:
+            raise HTTPException(404, str(e))
+
+    # =====================
+    # RECIPE VERSIONS (Feature 37)
+    # =====================
+
+    @app.post("/api/recipes/{recipe_id}/versions", tags=["versions"])
+    def api_save_version(recipe_id: int, authorization: str | None = Header(None)):
+        """현재 레시피 상태를 버전으로 저장"""
+        user = _get_user(authorization)
+        recipe = db.get_recipe(recipe_id)
+        if not recipe or recipe.author_id != user.id:
+            raise HTTPException(403, "권한이 없습니다")
+        try:
+            ver = db.save_recipe_version(recipe_id)
+            return {"success": True, "version": {"version_num": ver.version_num, "title": ver.title}}
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @app.get("/api/recipes/{recipe_id}/versions", tags=["versions"])
+    def api_get_versions(recipe_id: int):
+        """레시피 버전 이력"""
+        versions = db.get_recipe_versions(recipe_id)
+        return {"versions": [{"version_num": v.version_num, "title": v.title, "created_at": v.created_at} for v in versions]}
+
+    # =====================
+    # BOOKMARK TAGS (Feature 38)
+    # =====================
+
+    @app.post("/api/bookmark-tags", tags=["bookmark_tags"])
+    def api_create_bookmark_tag(req: BookmarkTagRequest, authorization: str | None = Header(None)):
+        """북마크 태그 생성"""
+        user = _get_user(authorization)
+        try:
+            tag = db.create_bookmark_tag(user.id, req.name)
+            return {"success": True, "tag": {"id": tag.id, "name": tag.name}}
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @app.get("/api/bookmark-tags", tags=["bookmark_tags"])
+    def api_get_bookmark_tags(authorization: str | None = Header(None)):
+        """내 북마크 태그 목록"""
+        user = _get_user(authorization)
+        tags = db.get_bookmark_tags(user.id)
+        return {"tags": [{"id": t.id, "name": t.name} for t in tags]}
+
+    @app.post("/api/bookmark-tags/assign", tags=["bookmark_tags"])
+    def api_assign_bookmark_tag(req: BookmarkTagAssignRequest, authorization: str | None = Header(None)):
+        """북마크에 태그 할당"""
+        user = _get_user(authorization)
+        try:
+            db.tag_bookmark(user.id, req.recipe_id, req.tag_id)
+            return {"success": True}
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @app.get("/api/bookmark-tags/{tag_id}/recipes", tags=["bookmark_tags"])
+    def api_bookmarks_by_tag(tag_id: int, authorization: str | None = Header(None)):
+        """태그별 북마크 레시피"""
+        user = _get_user(authorization)
+        recipes = db.get_bookmarks_by_tag(user.id, tag_id)
+        return {"recipes": [_recipe_dict(r) for r in recipes]}
+
+    # =====================
+    # PRINT FORMAT (Feature 39)
+    # =====================
+
+    @app.get("/api/recipes/{recipe_id}/print", tags=["print"])
+    def api_print_recipe(recipe_id: int):
+        """레시피 인쇄용 포맷"""
+        data = db.get_print_format(recipe_id)
+        if not data:
+            raise HTTPException(404, "레시피를 찾을 수 없습니다")
+        return data
+
+    # =====================
+    # DUPLICATE DETECTION (Feature 40)
+    # =====================
+
+    @app.get("/api/recipes/{recipe_id}/duplicates", tags=["duplicates"])
+    def api_find_duplicates(recipe_id: int, threshold: float = Query(0.7, ge=0, le=1)):
+        """유사/중복 레시피 탐지"""
+        return {"duplicates": db.find_duplicates(recipe_id, threshold=threshold)}
+
+    # =====================
     # HEALTH
     # =====================
 
@@ -1135,6 +1646,8 @@ def create_app():
             "bookmark_count": recipe.bookmark_count,
             "fork_count": recipe.fork_count,
             "cook_count": recipe.cook_count,
+            "view_count": recipe.view_count,
+            "season": recipe.season,
             "forked_from_id": recipe.forked_from_id,
             "created_at": recipe.created_at,
         }

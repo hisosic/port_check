@@ -41,6 +41,8 @@ class Recipe:
     bookmark_count: int = 0
     fork_count: int = 0
     cook_count: int = 0
+    view_count: int = 0
+    season: str = ""  # spring, summer, fall, winter, all
     forked_from_id: int | None = None
     created_at: float = 0.0
     author_name: str = ""  # joined field
@@ -271,6 +273,153 @@ class CookingTimer:
     sort_order: int = 0
 
 
+@dataclass
+class MealPlan:
+    id: int = 0
+    user_id: int = 0
+    date: str = ""  # YYYY-MM-DD
+    meal_type: str = ""  # breakfast, lunch, dinner, snack
+    recipe_id: int = 0
+    note: str = ""
+
+
+@dataclass
+class ShoppingItem:
+    id: int = 0
+    user_id: int = 0
+    name: str = ""
+    amount: str = ""
+    unit: str = ""
+    checked: bool = False
+    recipe_id: int | None = None
+
+
+@dataclass
+class BlockedUser:
+    id: int = 0
+    blocker_id: int = 0
+    blocked_id: int = 0
+    created_at: float = 0.0
+
+
+@dataclass
+class QA:
+    id: int = 0
+    recipe_id: int = 0
+    user_id: int = 0
+    question: str = ""
+    answer: str = ""
+    answered_by: int | None = None
+    created_at: float = 0.0
+    answered_at: float | None = None
+    username: str = ""  # joined
+
+
+@dataclass
+class AllergyInfo:
+    id: int = 0
+    recipe_id: int = 0
+    allergen: str = ""  # e.g. "gluten", "dairy", "nuts"
+
+
+@dataclass
+class DifficultyVote:
+    id: int = 0
+    recipe_id: int = 0
+    user_id: int = 0
+    vote: str = ""  # easy, medium, hard
+    created_at: float = 0.0
+
+
+@dataclass
+class ViewHistory:
+    id: int = 0
+    user_id: int = 0
+    recipe_id: int = 0
+    viewed_at: float = 0.0
+
+
+@dataclass
+class IngredientSub:
+    id: int = 0
+    original: str = ""
+    substitute: str = ""
+    note: str = ""
+
+
+@dataclass
+class Challenge:
+    id: int = 0
+    title: str = ""
+    description: str = ""
+    ingredient: str = ""
+    start_date: str = ""  # YYYY-MM-DD
+    end_date: str = ""
+    created_at: float = 0.0
+
+
+@dataclass
+class ChallengeEntry:
+    id: int = 0
+    challenge_id: int = 0
+    user_id: int = 0
+    recipe_id: int = 0
+    created_at: float = 0.0
+
+
+@dataclass
+class Poll:
+    id: int = 0
+    recipe_id: int = 0
+    question: str = ""
+    created_by: int = 0
+    created_at: float = 0.0
+
+
+@dataclass
+class PollOption:
+    id: int = 0
+    poll_id: int = 0
+    text: str = ""
+    vote_count: int = 0
+
+
+@dataclass
+class PollVote:
+    id: int = 0
+    poll_id: int = 0
+    option_id: int = 0
+    user_id: int = 0
+
+
+@dataclass
+class RecipeTip:
+    id: int = 0
+    recipe_id: int = 0
+    user_id: int = 0
+    content: str = ""
+    created_at: float = 0.0
+    username: str = ""  # joined
+
+
+@dataclass
+class RecipeVersion:
+    id: int = 0
+    recipe_id: int = 0
+    version_num: int = 0
+    title: str = ""
+    description: str = ""
+    instructions: str = ""
+    created_at: float = 0.0
+
+
+@dataclass
+class BookmarkTag:
+    id: int = 0
+    user_id: int = 0
+    name: str = ""
+
+
 # --- Point configuration ---
 POINTS_RECIPE_CREATED = 10
 POINTS_RECIPE_LIKED = 2
@@ -279,6 +428,18 @@ POINTS_COMMENT_WRITTEN = 3
 POINTS_RATING_GIVEN = 1
 POINTS_COOK_LOGGED = 2
 POINTS_REPLY_WRITTEN = 1
+POINTS_QA_ANSWER = 2
+POINTS_CHALLENGE_COMPLETE = 5
+
+# --- User level thresholds ---
+USER_LEVELS = [
+    (0, "초보 요리사"),
+    (50, "견습 요리사"),
+    (150, "중급 요리사"),
+    (300, "고급 요리사"),
+    (500, "마스터 셰프"),
+    (1000, "그랜드 셰프"),
+]
 
 
 def hash_password(password: str, salt: str = "") -> str:
@@ -338,6 +499,8 @@ class Database:
                 bookmark_count INTEGER DEFAULT 0,
                 fork_count INTEGER DEFAULT 0,
                 cook_count INTEGER DEFAULT 0,
+                view_count INTEGER DEFAULT 0,
+                season TEXT DEFAULT '',
                 forked_from_id INTEGER DEFAULT NULL,
                 created_at REAL DEFAULT (strftime('%s', 'now')),
                 FOREIGN KEY (author_id) REFERENCES users(id),
@@ -608,6 +771,190 @@ class Database:
             );
 
             CREATE INDEX IF NOT EXISTS idx_cooking_timers_recipe ON cooking_timers(recipe_id);
+
+            CREATE TABLE IF NOT EXISTS meal_plans (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                date TEXT NOT NULL,
+                meal_type TEXT NOT NULL CHECK(meal_type IN ('breakfast','lunch','dinner','snack')),
+                recipe_id INTEGER NOT NULL,
+                note TEXT DEFAULT '',
+                UNIQUE(user_id, date, meal_type),
+                FOREIGN KEY (user_id) REFERENCES users(id),
+                FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_meal_plans_user_date ON meal_plans(user_id, date);
+
+            CREATE TABLE IF NOT EXISTS shopping_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                amount TEXT DEFAULT '',
+                unit TEXT DEFAULT '',
+                checked INTEGER DEFAULT 0,
+                recipe_id INTEGER DEFAULT NULL,
+                FOREIGN KEY (user_id) REFERENCES users(id),
+                FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE SET NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_shopping_user ON shopping_items(user_id);
+
+            CREATE TABLE IF NOT EXISTS blocked_users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                blocker_id INTEGER NOT NULL,
+                blocked_id INTEGER NOT NULL,
+                created_at REAL DEFAULT (strftime('%s', 'now')),
+                UNIQUE(blocker_id, blocked_id),
+                FOREIGN KEY (blocker_id) REFERENCES users(id),
+                FOREIGN KEY (blocked_id) REFERENCES users(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS recipe_qa (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                recipe_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                question TEXT NOT NULL,
+                answer TEXT DEFAULT '',
+                answered_by INTEGER DEFAULT NULL,
+                created_at REAL DEFAULT (strftime('%s', 'now')),
+                answered_at REAL DEFAULT NULL,
+                FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users(id),
+                FOREIGN KEY (answered_by) REFERENCES users(id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_qa_recipe ON recipe_qa(recipe_id);
+
+            CREATE TABLE IF NOT EXISTS allergy_info (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                recipe_id INTEGER NOT NULL,
+                allergen TEXT NOT NULL,
+                UNIQUE(recipe_id, allergen),
+                FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS difficulty_votes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                recipe_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                vote TEXT NOT NULL CHECK(vote IN ('easy','medium','hard')),
+                created_at REAL DEFAULT (strftime('%s', 'now')),
+                UNIQUE(user_id, recipe_id),
+                FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS view_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                recipe_id INTEGER NOT NULL,
+                viewed_at REAL DEFAULT (strftime('%s', 'now')),
+                FOREIGN KEY (user_id) REFERENCES users(id),
+                FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_view_history_user ON view_history(user_id);
+
+            CREATE TABLE IF NOT EXISTS ingredient_subs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                original TEXT NOT NULL COLLATE NOCASE,
+                substitute TEXT NOT NULL,
+                note TEXT DEFAULT '',
+                UNIQUE(original, substitute)
+            );
+
+            CREATE TABLE IF NOT EXISTS challenges (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                description TEXT DEFAULT '',
+                ingredient TEXT DEFAULT '',
+                start_date TEXT NOT NULL,
+                end_date TEXT NOT NULL,
+                created_at REAL DEFAULT (strftime('%s', 'now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS challenge_entries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                challenge_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                recipe_id INTEGER NOT NULL,
+                created_at REAL DEFAULT (strftime('%s', 'now')),
+                UNIQUE(challenge_id, user_id),
+                FOREIGN KEY (challenge_id) REFERENCES challenges(id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users(id),
+                FOREIGN KEY (recipe_id) REFERENCES recipes(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS polls (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                recipe_id INTEGER NOT NULL,
+                question TEXT NOT NULL,
+                created_by INTEGER NOT NULL,
+                created_at REAL DEFAULT (strftime('%s', 'now')),
+                FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE,
+                FOREIGN KEY (created_by) REFERENCES users(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS poll_options (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                poll_id INTEGER NOT NULL,
+                text TEXT NOT NULL,
+                vote_count INTEGER DEFAULT 0,
+                FOREIGN KEY (poll_id) REFERENCES polls(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS poll_votes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                poll_id INTEGER NOT NULL,
+                option_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                UNIQUE(poll_id, user_id),
+                FOREIGN KEY (poll_id) REFERENCES polls(id) ON DELETE CASCADE,
+                FOREIGN KEY (option_id) REFERENCES poll_options(id),
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS recipe_tips (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                recipe_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                content TEXT NOT NULL,
+                created_at REAL DEFAULT (strftime('%s', 'now')),
+                FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_tips_recipe ON recipe_tips(recipe_id);
+
+            CREATE TABLE IF NOT EXISTS recipe_versions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                recipe_id INTEGER NOT NULL,
+                version_num INTEGER NOT NULL,
+                title TEXT NOT NULL,
+                description TEXT DEFAULT '',
+                instructions TEXT NOT NULL,
+                created_at REAL DEFAULT (strftime('%s', 'now')),
+                FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_versions_recipe ON recipe_versions(recipe_id);
+
+            CREATE TABLE IF NOT EXISTS bookmark_tags (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                UNIQUE(user_id, name),
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS bookmark_tag_map (
+                bookmark_id INTEGER NOT NULL,
+                tag_id INTEGER NOT NULL,
+                PRIMARY KEY (bookmark_id, tag_id),
+                FOREIGN KEY (bookmark_id) REFERENCES bookmarks(id) ON DELETE CASCADE,
+                FOREIGN KEY (tag_id) REFERENCES bookmark_tags(id) ON DELETE CASCADE
+            );
 
             -- Seed default badges
             INSERT OR IGNORE INTO badges (code, name, description, icon) VALUES
@@ -2257,3 +2604,796 @@ class Database:
         ).fetchall()
         conn.close()
         return [CookingTimer(**dict(r)) for r in rows]
+
+    # --- Meal Plan operations (Feature 21) ---
+
+    def set_meal_plan(self, user_id: int, date: str, meal_type: str, recipe_id: int, note: str = "") -> MealPlan:
+        if meal_type not in ("breakfast", "lunch", "dinner", "snack"):
+            raise ValueError("잘못된 식사 유형입니다")
+        recipe = self.get_recipe(recipe_id)
+        if not recipe:
+            raise ValueError("레시피를 찾을 수 없습니다")
+        conn = self._get_conn()
+        conn.execute(
+            """INSERT INTO meal_plans (user_id, date, meal_type, recipe_id, note)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(user_id, date, meal_type) DO UPDATE SET recipe_id=?, note=?""",
+            (user_id, date, meal_type, recipe_id, note, recipe_id, note),
+        )
+        conn.commit()
+        conn.close()
+        return MealPlan(user_id=user_id, date=date, meal_type=meal_type, recipe_id=recipe_id, note=note)
+
+    def get_meal_plans(self, user_id: int, start_date: str, end_date: str) -> list[MealPlan]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT * FROM meal_plans WHERE user_id = ? AND date >= ? AND date <= ? ORDER BY date, meal_type",
+            (user_id, start_date, end_date),
+        ).fetchall()
+        conn.close()
+        return [MealPlan(**dict(r)) for r in rows]
+
+    def delete_meal_plan(self, user_id: int, date: str, meal_type: str) -> bool:
+        conn = self._get_conn()
+        result = conn.execute(
+            "DELETE FROM meal_plans WHERE user_id = ? AND date = ? AND meal_type = ?",
+            (user_id, date, meal_type),
+        )
+        conn.commit()
+        conn.close()
+        return result.rowcount > 0
+
+    # --- Shopping List operations (Feature 22) ---
+
+    def add_shopping_item(self, user_id: int, name: str, amount: str = "", unit: str = "", recipe_id: int | None = None) -> ShoppingItem:
+        if not name.strip():
+            raise ValueError("재료명을 입력하세요")
+        conn = self._get_conn()
+        cur = conn.execute(
+            "INSERT INTO shopping_items (user_id, name, amount, unit, recipe_id) VALUES (?, ?, ?, ?, ?)",
+            (user_id, name.strip(), amount, unit, recipe_id),
+        )
+        conn.commit()
+        item_id = cur.lastrowid
+        conn.close()
+        return ShoppingItem(id=item_id, user_id=user_id, name=name.strip(), amount=amount, unit=unit, recipe_id=recipe_id)
+
+    def add_recipe_to_shopping(self, user_id: int, recipe_id: int) -> list[ShoppingItem]:
+        """Add all ingredients of a recipe to shopping list."""
+        ingredients = self.get_recipe_ingredients(recipe_id)
+        if not ingredients:
+            raise ValueError("레시피에 재료가 없습니다")
+        items = []
+        for ing in ingredients:
+            items.append(self.add_shopping_item(user_id, ing.name, ing.amount, ing.unit, recipe_id))
+        return items
+
+    def get_shopping_list(self, user_id: int) -> list[ShoppingItem]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT * FROM shopping_items WHERE user_id = ? ORDER BY checked, id",
+            (user_id,),
+        ).fetchall()
+        conn.close()
+        return [ShoppingItem(**dict(r)) for r in rows]
+
+    def toggle_shopping_item(self, item_id: int, user_id: int) -> bool:
+        conn = self._get_conn()
+        result = conn.execute(
+            "UPDATE shopping_items SET checked = NOT checked WHERE id = ? AND user_id = ?",
+            (item_id, user_id),
+        )
+        conn.commit()
+        conn.close()
+        return result.rowcount > 0
+
+    def delete_shopping_item(self, item_id: int, user_id: int) -> bool:
+        conn = self._get_conn()
+        result = conn.execute(
+            "DELETE FROM shopping_items WHERE id = ? AND user_id = ?", (item_id, user_id),
+        )
+        conn.commit()
+        conn.close()
+        return result.rowcount > 0
+
+    def clear_shopping_list(self, user_id: int, checked_only: bool = False) -> int:
+        conn = self._get_conn()
+        if checked_only:
+            result = conn.execute("DELETE FROM shopping_items WHERE user_id = ? AND checked = 1", (user_id,))
+        else:
+            result = conn.execute("DELETE FROM shopping_items WHERE user_id = ?", (user_id,))
+        conn.commit()
+        conn.close()
+        return result.rowcount
+
+    # --- Block User operations (Feature 23) ---
+
+    def block_user(self, blocker_id: int, blocked_id: int) -> dict:
+        if blocker_id == blocked_id:
+            raise ValueError("자기 자신을 차단할 수 없습니다")
+        conn = self._get_conn()
+        try:
+            now = time.time()
+            conn.execute(
+                "INSERT INTO blocked_users (blocker_id, blocked_id, created_at) VALUES (?, ?, ?)",
+                (blocker_id, blocked_id, now),
+            )
+            # Also unfollow if following
+            conn.execute("DELETE FROM follows WHERE follower_id = ? AND following_id = ?", (blocker_id, blocked_id))
+            conn.execute("DELETE FROM follows WHERE follower_id = ? AND following_id = ?", (blocked_id, blocker_id))
+            conn.commit()
+            conn.close()
+            return {"blocked": True}
+        except sqlite3.IntegrityError:
+            conn.close()
+            raise ValueError("이미 차단된 유저입니다")
+
+    def unblock_user(self, blocker_id: int, blocked_id: int) -> bool:
+        conn = self._get_conn()
+        result = conn.execute(
+            "DELETE FROM blocked_users WHERE blocker_id = ? AND blocked_id = ?",
+            (blocker_id, blocked_id),
+        )
+        conn.commit()
+        conn.close()
+        return result.rowcount > 0
+
+    def is_blocked(self, blocker_id: int, blocked_id: int) -> bool:
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT id FROM blocked_users WHERE blocker_id = ? AND blocked_id = ?",
+            (blocker_id, blocked_id),
+        ).fetchone()
+        conn.close()
+        return row is not None
+
+    def get_blocked_users(self, user_id: int) -> list[User]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            """SELECT u.* FROM blocked_users bu
+               JOIN users u ON bu.blocked_id = u.id
+               WHERE bu.blocker_id = ?""",
+            (user_id,),
+        ).fetchall()
+        conn.close()
+        return [User(**dict(r)) for r in rows]
+
+    # --- Recipe Q&A operations (Feature 24) ---
+
+    def ask_question(self, recipe_id: int, user_id: int, question: str) -> QA:
+        question = question.strip()
+        if not question:
+            raise ValueError("질문을 입력하세요")
+        recipe = self.get_recipe(recipe_id)
+        if not recipe:
+            raise ValueError("레시피를 찾을 수 없습니다")
+        conn = self._get_conn()
+        now = time.time()
+        cur = conn.execute(
+            "INSERT INTO recipe_qa (recipe_id, user_id, question, created_at) VALUES (?, ?, ?, ?)",
+            (recipe_id, user_id, question, now),
+        )
+        conn.commit()
+        qa_id = cur.lastrowid
+        conn.close()
+        return QA(id=qa_id, recipe_id=recipe_id, user_id=user_id, question=question, created_at=now)
+
+    def answer_question(self, qa_id: int, user_id: int, answer: str) -> QA | None:
+        answer = answer.strip()
+        if not answer:
+            raise ValueError("답변을 입력하세요")
+        conn = self._get_conn()
+        now = time.time()
+        result = conn.execute(
+            "UPDATE recipe_qa SET answer = ?, answered_by = ?, answered_at = ? WHERE id = ?",
+            (answer, user_id, now, qa_id),
+        )
+        if result.rowcount == 0:
+            conn.close()
+            return None
+        row = conn.execute(
+            "SELECT qa.*, u.username FROM recipe_qa qa JOIN users u ON qa.user_id = u.id WHERE qa.id = ?",
+            (qa_id,),
+        ).fetchone()
+        conn.commit()
+        conn.close()
+        self.update_points(user_id, POINTS_QA_ANSWER, "Q&A 답변")
+        return QA(**dict(row)) if row else None
+
+    def get_recipe_qa(self, recipe_id: int) -> list[QA]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT qa.*, u.username FROM recipe_qa qa JOIN users u ON qa.user_id = u.id WHERE qa.recipe_id = ? ORDER BY qa.created_at DESC",
+            (recipe_id,),
+        ).fetchall()
+        conn.close()
+        return [QA(**dict(r)) for r in rows]
+
+    # --- Season Recipe operations (Feature 25) ---
+
+    def set_recipe_season(self, recipe_id: int, season: str) -> bool:
+        valid = ("spring", "summer", "fall", "winter", "all", "")
+        if season not in valid:
+            raise ValueError("잘못된 계절입니다")
+        conn = self._get_conn()
+        result = conn.execute("UPDATE recipes SET season = ? WHERE id = ?", (season, recipe_id))
+        conn.commit()
+        conn.close()
+        return result.rowcount > 0
+
+    def get_seasonal_recipes(self, season: str, limit: int = 50) -> list[Recipe]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            """SELECT r.*, u.username as author_name FROM recipes r
+               JOIN users u ON r.author_id = u.id
+               WHERE r.season = ? OR r.season = 'all'
+               ORDER BY r.rating_avg DESC LIMIT ?""",
+            (season, limit),
+        ).fetchall()
+        conn.close()
+        return [Recipe(**dict(r)) for r in rows]
+
+    # --- Allergy Info operations (Feature 26) ---
+
+    COMMON_ALLERGENS = ["gluten", "dairy", "eggs", "nuts", "peanuts", "soy", "shellfish", "fish", "wheat", "sesame"]
+
+    def set_allergens(self, recipe_id: int, allergens: list[str]) -> list[str]:
+        conn = self._get_conn()
+        conn.execute("DELETE FROM allergy_info WHERE recipe_id = ?", (recipe_id,))
+        result = []
+        for a in allergens:
+            a = a.strip().lower()
+            if a:
+                conn.execute("INSERT OR IGNORE INTO allergy_info (recipe_id, allergen) VALUES (?, ?)", (recipe_id, a))
+                result.append(a)
+        conn.commit()
+        conn.close()
+        return result
+
+    def get_allergens(self, recipe_id: int) -> list[str]:
+        conn = self._get_conn()
+        rows = conn.execute("SELECT allergen FROM allergy_info WHERE recipe_id = ?", (recipe_id,)).fetchall()
+        conn.close()
+        return [r["allergen"] for r in rows]
+
+    def find_recipes_without_allergens(self, exclude_allergens: list[str], limit: int = 50) -> list[Recipe]:
+        """Find recipes that do NOT contain any of the specified allergens."""
+        if not exclude_allergens:
+            return self.list_recipes(limit=limit)
+        conn = self._get_conn()
+        placeholders = ",".join("?" for _ in exclude_allergens)
+        rows = conn.execute(
+            f"""SELECT r.*, u.username as author_name FROM recipes r
+                JOIN users u ON r.author_id = u.id
+                WHERE r.id NOT IN (
+                    SELECT recipe_id FROM allergy_info WHERE allergen IN ({placeholders})
+                )
+                ORDER BY r.rating_avg DESC LIMIT ?""",
+            (*[a.lower() for a in exclude_allergens], limit),
+        ).fetchall()
+        conn.close()
+        return [Recipe(**dict(r)) for r in rows]
+
+    # --- Difficulty Vote operations (Feature 27) ---
+
+    def vote_difficulty(self, recipe_id: int, user_id: int, vote: str) -> dict:
+        if vote not in ("easy", "medium", "hard"):
+            raise ValueError("잘못된 난이도입니다")
+        conn = self._get_conn()
+        now = time.time()
+        conn.execute(
+            """INSERT INTO difficulty_votes (recipe_id, user_id, vote, created_at)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(user_id, recipe_id) DO UPDATE SET vote=?, created_at=?""",
+            (recipe_id, user_id, vote, now, vote, now),
+        )
+        conn.commit()
+        # Get distribution
+        rows = conn.execute(
+            "SELECT vote, COUNT(*) as cnt FROM difficulty_votes WHERE recipe_id = ? GROUP BY vote",
+            (recipe_id,),
+        ).fetchall()
+        conn.close()
+        dist = {"easy": 0, "medium": 0, "hard": 0}
+        for r in rows:
+            dist[r["vote"]] = r["cnt"]
+        total = sum(dist.values())
+        return {"distribution": dist, "total_votes": total, "your_vote": vote}
+
+    def get_difficulty_votes(self, recipe_id: int) -> dict:
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT vote, COUNT(*) as cnt FROM difficulty_votes WHERE recipe_id = ? GROUP BY vote",
+            (recipe_id,),
+        ).fetchall()
+        conn.close()
+        dist = {"easy": 0, "medium": 0, "hard": 0}
+        for r in rows:
+            dist[r["vote"]] = r["cnt"]
+        return {"distribution": dist, "total_votes": sum(dist.values())}
+
+    # --- Recipe Compare (Feature 28) ---
+
+    def compare_recipes(self, recipe_id_a: int, recipe_id_b: int) -> dict:
+        a = self.get_recipe(recipe_id_a)
+        b = self.get_recipe(recipe_id_b)
+        if not a or not b:
+            raise ValueError("레시피를 찾을 수 없습니다")
+        ing_a = {i.name.lower() for i in self.get_recipe_ingredients(recipe_id_a)}
+        ing_b = {i.name.lower() for i in self.get_recipe_ingredients(recipe_id_b)}
+        nut_a = self.get_nutrition(recipe_id_a)
+        nut_b = self.get_nutrition(recipe_id_b)
+        return {
+            "recipe_a": {"id": a.id, "title": a.title, "difficulty": a.difficulty,
+                         "cooking_time": a.cooking_time_min, "rating": a.rating_avg,
+                         "likes": a.like_count, "servings": a.servings},
+            "recipe_b": {"id": b.id, "title": b.title, "difficulty": b.difficulty,
+                         "cooking_time": b.cooking_time_min, "rating": b.rating_avg,
+                         "likes": b.like_count, "servings": b.servings},
+            "shared_ingredients": sorted(ing_a & ing_b),
+            "only_in_a": sorted(ing_a - ing_b),
+            "only_in_b": sorted(ing_b - ing_a),
+            "nutrition_a": {"calories": nut_a.calories, "protein": nut_a.protein_g} if nut_a else None,
+            "nutrition_b": {"calories": nut_b.calories, "protein": nut_b.protein_g} if nut_b else None,
+        }
+
+    # --- User Statistics (Feature 29) ---
+
+    def get_user_stats(self, user_id: int) -> dict:
+        conn = self._get_conn()
+        recipes = conn.execute("SELECT COUNT(*) as cnt FROM recipes WHERE author_id = ?", (user_id,)).fetchone()["cnt"]
+        comments = conn.execute("SELECT COUNT(*) as cnt FROM comments WHERE user_id = ?", (user_id,)).fetchone()["cnt"]
+        likes_given = conn.execute("SELECT COUNT(*) as cnt FROM likes WHERE user_id = ?", (user_id,)).fetchone()["cnt"]
+        likes_received = conn.execute(
+            "SELECT COALESCE(SUM(like_count),0) as cnt FROM recipes WHERE author_id = ?", (user_id,),
+        ).fetchone()["cnt"]
+        ratings_given = conn.execute("SELECT COUNT(*) as cnt FROM ratings WHERE user_id = ?", (user_id,)).fetchone()["cnt"]
+        cook_logs = conn.execute("SELECT COUNT(*) as cnt FROM cook_logs WHERE user_id = ?", (user_id,)).fetchone()["cnt"]
+        followers = conn.execute("SELECT COUNT(*) as cnt FROM follows WHERE following_id = ?", (user_id,)).fetchone()["cnt"]
+        following = conn.execute("SELECT COUNT(*) as cnt FROM follows WHERE follower_id = ?", (user_id,)).fetchone()["cnt"]
+        conn.close()
+        user = self.get_user(user_id)
+        level_name = "초보 요리사"
+        for threshold, name in USER_LEVELS:
+            if user and user.points >= threshold:
+                level_name = name
+        return {
+            "recipes": recipes, "comments": comments, "likes_given": likes_given,
+            "likes_received": likes_received, "ratings_given": ratings_given,
+            "cook_logs": cook_logs, "followers": followers, "following": following,
+            "points": user.points if user else 0, "level": level_name,
+            "badges": len(self.get_user_badges(user_id)),
+        }
+
+    # --- View History operations (Feature 30) ---
+
+    def record_view(self, user_id: int, recipe_id: int) -> None:
+        conn = self._get_conn()
+        now = time.time()
+        conn.execute(
+            "INSERT INTO view_history (user_id, recipe_id, viewed_at) VALUES (?, ?, ?)",
+            (user_id, recipe_id, now),
+        )
+        conn.execute("UPDATE recipes SET view_count = view_count + 1 WHERE id = ?", (recipe_id,))
+        conn.commit()
+        conn.close()
+
+    def get_view_history(self, user_id: int, limit: int = 50) -> list[dict]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            """SELECT DISTINCT vh.recipe_id, MAX(vh.viewed_at) as last_viewed,
+                      r.title, r.author_id, u.username as author_name
+               FROM view_history vh
+               JOIN recipes r ON vh.recipe_id = r.id
+               JOIN users u ON r.author_id = u.id
+               WHERE vh.user_id = ?
+               GROUP BY vh.recipe_id
+               ORDER BY last_viewed DESC LIMIT ?""",
+            (user_id, limit),
+        ).fetchall()
+        conn.close()
+        return [{"recipe_id": r["recipe_id"], "title": r["title"],
+                 "author_name": r["author_name"], "last_viewed": r["last_viewed"]} for r in rows]
+
+    # --- Ingredient Substitution (Feature 31) ---
+
+    def add_substitution(self, original: str, substitute: str, note: str = "") -> IngredientSub:
+        if not original.strip() or not substitute.strip():
+            raise ValueError("재료명을 입력하세요")
+        conn = self._get_conn()
+        try:
+            cur = conn.execute(
+                "INSERT INTO ingredient_subs (original, substitute, note) VALUES (?, ?, ?)",
+                (original.strip().lower(), substitute.strip(), note.strip()),
+            )
+            conn.commit()
+            sub_id = cur.lastrowid
+            conn.close()
+            return IngredientSub(id=sub_id, original=original.strip().lower(),
+                                 substitute=substitute.strip(), note=note.strip())
+        except sqlite3.IntegrityError:
+            conn.close()
+            raise ValueError("이미 등록된 대체 재료입니다")
+
+    def get_substitutions(self, ingredient: str) -> list[IngredientSub]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT * FROM ingredient_subs WHERE original = ?", (ingredient.strip().lower(),),
+        ).fetchall()
+        conn.close()
+        return [IngredientSub(**dict(r)) for r in rows]
+
+    # --- Cooking Challenge operations (Feature 32) ---
+
+    def create_challenge(self, title: str, description: str, ingredient: str,
+                         start_date: str, end_date: str) -> Challenge:
+        if not title.strip():
+            raise ValueError("챌린지 제목을 입력하세요")
+        conn = self._get_conn()
+        now = time.time()
+        cur = conn.execute(
+            "INSERT INTO challenges (title, description, ingredient, start_date, end_date, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (title.strip(), description.strip(), ingredient.strip(), start_date, end_date, now),
+        )
+        conn.commit()
+        ch_id = cur.lastrowid
+        conn.close()
+        return Challenge(id=ch_id, title=title.strip(), description=description.strip(),
+                         ingredient=ingredient.strip(), start_date=start_date, end_date=end_date, created_at=now)
+
+    def enter_challenge(self, challenge_id: int, user_id: int, recipe_id: int) -> dict:
+        conn = self._get_conn()
+        now = time.time()
+        try:
+            conn.execute(
+                "INSERT INTO challenge_entries (challenge_id, user_id, recipe_id, created_at) VALUES (?, ?, ?, ?)",
+                (challenge_id, user_id, recipe_id, now),
+            )
+            conn.commit()
+            conn.close()
+            self.update_points(user_id, POINTS_CHALLENGE_COMPLETE, "챌린지 참여")
+            return {"entered": True}
+        except sqlite3.IntegrityError:
+            conn.close()
+            raise ValueError("이미 참여한 챌린지입니다")
+
+    def get_challenge_entries(self, challenge_id: int) -> list[dict]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            """SELECT ce.*, u.username, r.title as recipe_title
+               FROM challenge_entries ce
+               JOIN users u ON ce.user_id = u.id
+               JOIN recipes r ON ce.recipe_id = r.id
+               WHERE ce.challenge_id = ?
+               ORDER BY ce.created_at""",
+            (challenge_id,),
+        ).fetchall()
+        conn.close()
+        return [{"user_id": r["user_id"], "username": r["username"],
+                 "recipe_id": r["recipe_id"], "recipe_title": r["recipe_title"]} for r in rows]
+
+    def get_active_challenges(self, date: str = "") -> list[Challenge]:
+        if not date:
+            date = time.strftime("%Y-%m-%d")
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT * FROM challenges WHERE start_date <= ? AND end_date >= ? ORDER BY end_date",
+            (date, date),
+        ).fetchall()
+        conn.close()
+        return [Challenge(**dict(r)) for r in rows]
+
+    # --- Poll operations (Feature 33) ---
+
+    def create_poll(self, recipe_id: int, user_id: int, question: str, options: list[str]) -> dict:
+        if not question.strip() or len(options) < 2:
+            raise ValueError("질문과 2개 이상의 선택지를 입력하세요")
+        conn = self._get_conn()
+        now = time.time()
+        cur = conn.execute(
+            "INSERT INTO polls (recipe_id, question, created_by, created_at) VALUES (?, ?, ?, ?)",
+            (recipe_id, question.strip(), user_id, now),
+        )
+        poll_id = cur.lastrowid
+        opt_list = []
+        for text in options:
+            if text.strip():
+                c = conn.execute(
+                    "INSERT INTO poll_options (poll_id, text) VALUES (?, ?)", (poll_id, text.strip()),
+                )
+                opt_list.append({"id": c.lastrowid, "text": text.strip(), "vote_count": 0})
+        conn.commit()
+        conn.close()
+        return {"poll_id": poll_id, "question": question.strip(), "options": opt_list}
+
+    def vote_poll(self, poll_id: int, option_id: int, user_id: int) -> dict:
+        conn = self._get_conn()
+        try:
+            conn.execute(
+                "INSERT INTO poll_votes (poll_id, option_id, user_id) VALUES (?, ?, ?)",
+                (poll_id, option_id, user_id),
+            )
+            conn.execute("UPDATE poll_options SET vote_count = vote_count + 1 WHERE id = ?", (option_id,))
+            conn.commit()
+        except sqlite3.IntegrityError:
+            conn.close()
+            raise ValueError("이미 투표했습니다")
+        rows = conn.execute(
+            "SELECT * FROM poll_options WHERE poll_id = ? ORDER BY id", (poll_id,),
+        ).fetchall()
+        conn.close()
+        return {"options": [{"id": r["id"], "text": r["text"], "vote_count": r["vote_count"]} for r in rows]}
+
+    def get_poll(self, poll_id: int) -> dict | None:
+        conn = self._get_conn()
+        poll = conn.execute("SELECT * FROM polls WHERE id = ?", (poll_id,)).fetchone()
+        if not poll:
+            conn.close()
+            return None
+        options = conn.execute("SELECT * FROM poll_options WHERE poll_id = ? ORDER BY id", (poll_id,)).fetchall()
+        conn.close()
+        return {
+            "id": poll["id"], "question": poll["question"], "recipe_id": poll["recipe_id"],
+            "options": [{"id": o["id"], "text": o["text"], "vote_count": o["vote_count"]} for o in options],
+        }
+
+    # --- User Level (Feature 34) ---
+
+    def get_user_level(self, user_id: int) -> dict:
+        user = self.get_user(user_id)
+        if not user:
+            raise ValueError("유저를 찾을 수 없습니다")
+        level_name = USER_LEVELS[0][1]
+        current_threshold = 0
+        next_threshold = USER_LEVELS[1][0] if len(USER_LEVELS) > 1 else None
+        for i, (threshold, name) in enumerate(USER_LEVELS):
+            if user.points >= threshold:
+                level_name = name
+                current_threshold = threshold
+                next_threshold = USER_LEVELS[i + 1][0] if i + 1 < len(USER_LEVELS) else None
+        return {
+            "level": level_name,
+            "points": user.points,
+            "current_threshold": current_threshold,
+            "next_threshold": next_threshold,
+            "points_to_next": (next_threshold - user.points) if next_threshold else 0,
+        }
+
+    # --- Recipe Tips (Feature 35) ---
+
+    def add_recipe_tip(self, recipe_id: int, user_id: int, content: str) -> RecipeTip:
+        content = content.strip()
+        if not content:
+            raise ValueError("팁 내용을 입력하세요")
+        if len(content) > 1000:
+            raise ValueError("팁은 1000자 이하로 작성하세요")
+        conn = self._get_conn()
+        now = time.time()
+        cur = conn.execute(
+            "INSERT INTO recipe_tips (recipe_id, user_id, content, created_at) VALUES (?, ?, ?, ?)",
+            (recipe_id, user_id, content, now),
+        )
+        conn.commit()
+        tip_id = cur.lastrowid
+        conn.close()
+        return RecipeTip(id=tip_id, recipe_id=recipe_id, user_id=user_id, content=content, created_at=now)
+
+    def get_recipe_tips(self, recipe_id: int) -> list[RecipeTip]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT rt.*, u.username FROM recipe_tips rt JOIN users u ON rt.user_id = u.id WHERE rt.recipe_id = ? ORDER BY rt.created_at DESC",
+            (recipe_id,),
+        ).fetchall()
+        conn.close()
+        return [RecipeTip(**dict(r)) for r in rows]
+
+    # --- Recipe Export (Feature 36) ---
+
+    def export_recipe(self, recipe_id: int, format: str = "json") -> dict | str:
+        recipe = self.get_recipe(recipe_id)
+        if not recipe:
+            raise ValueError("레시피를 찾을 수 없습니다")
+        ingredients = self.get_recipe_ingredients(recipe_id)
+        steps = self.get_recipe_steps(recipe_id)
+        nutrition = self.get_nutrition(recipe_id)
+        tags = self.get_recipe_tags(recipe_id)
+
+        data = {
+            "title": recipe.title,
+            "description": recipe.description,
+            "author": recipe.author_name,
+            "difficulty": recipe.difficulty,
+            "cooking_time_min": recipe.cooking_time_min,
+            "servings": recipe.servings,
+            "ingredients": [{"name": i.name, "amount": i.amount, "unit": i.unit} for i in ingredients],
+            "steps": [{"step": s.step_number, "title": s.title, "description": s.description} for s in steps],
+            "instructions": recipe.instructions,
+            "tags": tags,
+            "nutrition": {
+                "calories": nutrition.calories, "protein_g": nutrition.protein_g,
+                "carbs_g": nutrition.carbs_g, "fat_g": nutrition.fat_g,
+            } if nutrition else None,
+        }
+
+        if format == "text":
+            lines = [f"# {recipe.title}", f"작성자: {recipe.author_name}",
+                     f"난이도: {recipe.difficulty} | 조리시간: {recipe.cooking_time_min}분 | {recipe.servings}인분", ""]
+            lines.append("## 재료")
+            for i in ingredients:
+                lines.append(f"- {i.name} {i.amount} {i.unit}".strip())
+            lines.append("")
+            if steps:
+                lines.append("## 조리 순서")
+                for s in steps:
+                    title_part = f" ({s.title})" if s.title else ""
+                    lines.append(f"{s.step_number}. {s.description}{title_part}")
+            else:
+                lines.append("## 조리법")
+                lines.append(recipe.instructions)
+            return "\n".join(lines)
+
+        return data
+
+    # --- Recipe Version operations (Feature 37) ---
+
+    def save_recipe_version(self, recipe_id: int) -> RecipeVersion:
+        """Save current state of recipe as a version snapshot."""
+        recipe = self.get_recipe(recipe_id)
+        if not recipe:
+            raise ValueError("레시피를 찾을 수 없습니다")
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT COALESCE(MAX(version_num), 0) + 1 as next_ver FROM recipe_versions WHERE recipe_id = ?",
+            (recipe_id,),
+        ).fetchone()
+        ver_num = row["next_ver"]
+        now = time.time()
+        cur = conn.execute(
+            "INSERT INTO recipe_versions (recipe_id, version_num, title, description, instructions, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (recipe_id, ver_num, recipe.title, recipe.description, recipe.instructions, now),
+        )
+        conn.commit()
+        ver_id = cur.lastrowid
+        conn.close()
+        return RecipeVersion(id=ver_id, recipe_id=recipe_id, version_num=ver_num,
+                             title=recipe.title, description=recipe.description,
+                             instructions=recipe.instructions, created_at=now)
+
+    def get_recipe_versions(self, recipe_id: int) -> list[RecipeVersion]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT * FROM recipe_versions WHERE recipe_id = ? ORDER BY version_num DESC",
+            (recipe_id,),
+        ).fetchall()
+        conn.close()
+        return [RecipeVersion(**dict(r)) for r in rows]
+
+    # --- Bookmark Tags (Feature 38) ---
+
+    def create_bookmark_tag(self, user_id: int, name: str) -> BookmarkTag:
+        if not name.strip():
+            raise ValueError("태그 이름을 입력하세요")
+        conn = self._get_conn()
+        try:
+            cur = conn.execute(
+                "INSERT INTO bookmark_tags (user_id, name) VALUES (?, ?)", (user_id, name.strip()),
+            )
+            conn.commit()
+            tag_id = cur.lastrowid
+            conn.close()
+            return BookmarkTag(id=tag_id, user_id=user_id, name=name.strip())
+        except sqlite3.IntegrityError:
+            conn.close()
+            raise ValueError("이미 존재하는 태그입니다")
+
+    def get_bookmark_tags(self, user_id: int) -> list[BookmarkTag]:
+        conn = self._get_conn()
+        rows = conn.execute("SELECT * FROM bookmark_tags WHERE user_id = ?", (user_id,)).fetchall()
+        conn.close()
+        return [BookmarkTag(**dict(r)) for r in rows]
+
+    def tag_bookmark(self, user_id: int, recipe_id: int, tag_id: int) -> bool:
+        conn = self._get_conn()
+        bm = conn.execute(
+            "SELECT id FROM bookmarks WHERE user_id = ? AND recipe_id = ?", (user_id, recipe_id),
+        ).fetchone()
+        if not bm:
+            conn.close()
+            raise ValueError("북마크를 찾을 수 없습니다")
+        try:
+            conn.execute("INSERT INTO bookmark_tag_map (bookmark_id, tag_id) VALUES (?, ?)", (bm["id"], tag_id))
+            conn.commit()
+            conn.close()
+            return True
+        except sqlite3.IntegrityError:
+            conn.close()
+            return False
+
+    def get_bookmarks_by_tag(self, user_id: int, tag_id: int) -> list[Recipe]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            """SELECT r.*, u.username as author_name
+               FROM bookmark_tag_map btm
+               JOIN bookmarks b ON btm.bookmark_id = b.id
+               JOIN recipes r ON b.recipe_id = r.id
+               JOIN users u ON r.author_id = u.id
+               WHERE b.user_id = ? AND btm.tag_id = ?""",
+            (user_id, tag_id),
+        ).fetchall()
+        conn.close()
+        return [Recipe(**dict(r)) for r in rows]
+
+    # --- Print Format (Feature 39) ---
+
+    def get_print_format(self, recipe_id: int) -> dict | None:
+        """Get recipe in a print-friendly format."""
+        recipe = self.get_recipe(recipe_id)
+        if not recipe:
+            return None
+        ingredients = self.get_recipe_ingredients(recipe_id)
+        steps = self.get_recipe_steps(recipe_id)
+        nutrition = self.get_nutrition(recipe_id)
+        timers = self.get_cooking_timers(recipe_id)
+        return {
+            "title": recipe.title,
+            "author": recipe.author_name,
+            "difficulty": recipe.difficulty,
+            "cooking_time_min": recipe.cooking_time_min,
+            "servings": recipe.servings,
+            "description": recipe.description,
+            "ingredients": [f"{i.name} {i.amount} {i.unit}".strip() for i in ingredients],
+            "steps": [{"num": s.step_number, "text": s.description,
+                        "timer": f"{s.timer_minutes}분" if s.timer_minutes else None} for s in steps],
+            "instructions": recipe.instructions if not steps else None,
+            "nutrition_summary": f"{nutrition.calories}kcal | 단백질 {nutrition.protein_g}g | 탄수화물 {nutrition.carbs_g}g | 지방 {nutrition.fat_g}g" if nutrition else None,
+            "timers": [f"{t.label}: {t.duration_seconds // 60}분 {t.duration_seconds % 60}초" for t in timers],
+        }
+
+    # --- Duplicate Detection (Feature 40) ---
+
+    def find_duplicates(self, recipe_id: int, threshold: float = 0.7) -> list[dict]:
+        """Find potentially duplicate recipes based on title similarity and ingredient overlap."""
+        recipe = self.get_recipe(recipe_id)
+        if not recipe:
+            return []
+        my_ings = {i.name.lower() for i in self.get_recipe_ingredients(recipe_id)}
+        if not my_ings:
+            return []
+
+        conn = self._get_conn()
+        # Get all other recipes
+        rows = conn.execute(
+            """SELECT r.id, r.title, r.author_id, u.username as author_name
+               FROM recipes r JOIN users u ON r.author_id = u.id
+               WHERE r.id != ?""",
+            (recipe_id,),
+        ).fetchall()
+        conn.close()
+
+        duplicates = []
+        for row in rows:
+            other_ings = {i.name.lower() for i in self.get_recipe_ingredients(row["id"])}
+            if not other_ings:
+                continue
+            # Jaccard similarity
+            intersection = len(my_ings & other_ings)
+            union = len(my_ings | other_ings)
+            similarity = intersection / union if union else 0
+
+            # Title similarity bonus
+            title_a = recipe.title.lower()
+            title_b = row["title"].lower()
+            title_overlap = len(set(title_a) & set(title_b)) / max(len(set(title_a) | set(title_b)), 1)
+            combined = similarity * 0.7 + title_overlap * 0.3
+
+            if combined >= threshold:
+                duplicates.append({
+                    "recipe_id": row["id"],
+                    "title": row["title"],
+                    "author_name": row["author_name"],
+                    "similarity": round(combined, 2),
+                    "shared_ingredients": sorted(my_ings & other_ings),
+                })
+
+        duplicates.sort(key=lambda x: x["similarity"], reverse=True)
+        return duplicates
