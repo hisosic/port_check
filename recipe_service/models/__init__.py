@@ -5080,3 +5080,1478 @@ class Database:
                 "protein_g": round(goal.daily_protein_g - total_pro, 1),
             } if goal else None,
         }
+
+    # =============================================
+    # FEATURES 71-120
+    # =============================================
+
+    # --- Rating Reviews (Feature 71) ---
+
+    def add_rating_review(self, rating_id: int, user_id: int, recipe_id: int, text: str) -> RatingReview:
+        conn = self._get_conn()
+        now = time.time()
+        cur = conn.execute(
+            "INSERT INTO rating_reviews (rating_id, user_id, recipe_id, text, created_at) VALUES (?,?,?,?,?)",
+            (rating_id, user_id, recipe_id, text.strip(), now))
+        conn.commit()
+        rid = cur.lastrowid
+        conn.close()
+        return RatingReview(id=rid, rating_id=rating_id, user_id=user_id, recipe_id=recipe_id, text=text.strip(), created_at=now)
+
+    def get_rating_reviews(self, recipe_id: int, limit: int = 50) -> list[RatingReview]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT * FROM rating_reviews WHERE recipe_id=? ORDER BY created_at DESC LIMIT ?",
+            (recipe_id, limit)).fetchall()
+        conn.close()
+        return [RatingReview(**dict(r)) for r in rows]
+
+    # --- Ingredient Groups (Feature 72) ---
+
+    def set_ingredient_groups(self, recipe_id: int, groups: list[dict]) -> list[dict]:
+        conn = self._get_conn()
+        conn.execute("DELETE FROM ingredient_groups WHERE recipe_id=?", (recipe_id,))
+        result = []
+        for i, g in enumerate(groups):
+            conn.execute("INSERT INTO ingredient_groups (recipe_id, group_name, sort_order) VALUES (?,?,?)",
+                         (recipe_id, g["group_name"], g.get("sort_order", i)))
+            result.append({"group_name": g["group_name"], "sort_order": g.get("sort_order", i)})
+        conn.commit()
+        conn.close()
+        return result
+
+    def get_ingredient_groups(self, recipe_id: int) -> list[dict]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT group_name, sort_order FROM ingredient_groups WHERE recipe_id=? ORDER BY sort_order",
+            (recipe_id,)).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+    # --- Recipe Drafts (Feature 73) ---
+
+    def save_draft(self, user_id: int, title: str, data_json: str) -> RecipeDraft:
+        conn = self._get_conn()
+        now = time.time()
+        conn.execute(
+            """INSERT INTO recipe_drafts (user_id, title, data_json, updated_at) VALUES (?,?,?,?)
+               ON CONFLICT(user_id, title) DO UPDATE SET data_json=?, updated_at=?""",
+            (user_id, title, data_json, now, data_json, now))
+        conn.commit()
+        row = conn.execute("SELECT * FROM recipe_drafts WHERE user_id=? AND title=?", (user_id, title)).fetchone()
+        conn.close()
+        return RecipeDraft(**dict(row))
+
+    def get_drafts(self, user_id: int) -> list[RecipeDraft]:
+        conn = self._get_conn()
+        rows = conn.execute("SELECT * FROM recipe_drafts WHERE user_id=? ORDER BY updated_at DESC", (user_id,)).fetchall()
+        conn.close()
+        return [RecipeDraft(**dict(r)) for r in rows]
+
+    def delete_draft(self, draft_id: int, user_id: int) -> bool:
+        conn = self._get_conn()
+        cur = conn.execute("DELETE FROM recipe_drafts WHERE id=? AND user_id=?", (draft_id, user_id))
+        conn.commit()
+        conn.close()
+        return cur.rowcount > 0
+
+    # --- Cooking Progress (Feature 74) ---
+
+    def update_cooking_progress(self, user_id: int, recipe_id: int, current_step: int, total_steps: int) -> CookingProgress:
+        conn = self._get_conn()
+        now = time.time()
+        conn.execute(
+            """INSERT INTO cooking_progress (user_id, recipe_id, current_step, total_steps, started_at, updated_at)
+               VALUES (?,?,?,?,?,?) ON CONFLICT(user_id, recipe_id) DO UPDATE SET current_step=?, total_steps=?, updated_at=?""",
+            (user_id, recipe_id, current_step, total_steps, now, now, current_step, total_steps, now))
+        conn.commit()
+        row = conn.execute("SELECT * FROM cooking_progress WHERE user_id=? AND recipe_id=?", (user_id, recipe_id)).fetchone()
+        conn.close()
+        return CookingProgress(**dict(row))
+
+    def get_cooking_progress(self, user_id: int, recipe_id: int) -> CookingProgress | None:
+        conn = self._get_conn()
+        row = conn.execute("SELECT * FROM cooking_progress WHERE user_id=? AND recipe_id=?", (user_id, recipe_id)).fetchone()
+        conn.close()
+        return CookingProgress(**dict(row)) if row else None
+
+    def clear_cooking_progress(self, user_id: int, recipe_id: int) -> bool:
+        conn = self._get_conn()
+        cur = conn.execute("DELETE FROM cooking_progress WHERE user_id=? AND recipe_id=?", (user_id, recipe_id))
+        conn.commit()
+        conn.close()
+        return cur.rowcount > 0
+
+    # --- Recipe Source (Feature 75) ---
+
+    def set_recipe_source(self, recipe_id: int, url: str, source_name: str = "") -> RecipeSource:
+        conn = self._get_conn()
+        conn.execute(
+            """INSERT INTO recipe_sources (recipe_id, url, source_name) VALUES (?,?,?)
+               ON CONFLICT(recipe_id) DO UPDATE SET url=?, source_name=?""",
+            (recipe_id, url, source_name, url, source_name))
+        conn.commit()
+        row = conn.execute("SELECT * FROM recipe_sources WHERE recipe_id=?", (recipe_id,)).fetchone()
+        conn.close()
+        return RecipeSource(**dict(row))
+
+    def get_recipe_source(self, recipe_id: int) -> RecipeSource | None:
+        conn = self._get_conn()
+        row = conn.execute("SELECT * FROM recipe_sources WHERE recipe_id=?", (recipe_id,)).fetchone()
+        conn.close()
+        return RecipeSource(**dict(row)) if row else None
+
+    # --- Menu Suggestion (Feature 76) ---
+
+    def get_menu_suggestions(self, meal_type: str = "lunch", limit: int = 5) -> list[Recipe]:
+        conn = self._get_conn()
+        time_filter = ""
+        if meal_type == "breakfast":
+            time_filter = "AND r.cooking_time_min <= 30"
+        elif meal_type == "snack":
+            time_filter = "AND r.cooking_time_min <= 15"
+        rows = conn.execute(
+            f"""SELECT r.*, u.username AS author_name FROM recipes r
+                JOIN users u ON r.author_id=u.id
+                WHERE r.is_public=1 {time_filter}
+                ORDER BY r.rating_avg DESC, r.like_count DESC LIMIT ?""",
+            (limit,)).fetchall()
+        conn.close()
+        return [Recipe(**dict(r)) for r in rows]
+
+    # --- Cost Log (Feature 77) ---
+
+    def log_cooking_cost(self, user_id: int, recipe_id: int, amount: float, note: str = "") -> CostLog:
+        conn = self._get_conn()
+        now = time.time()
+        cur = conn.execute(
+            "INSERT INTO cost_logs (user_id, recipe_id, amount, note, created_at) VALUES (?,?,?,?,?)",
+            (user_id, recipe_id, amount, note, now))
+        conn.commit()
+        cid = cur.lastrowid
+        conn.close()
+        return CostLog(id=cid, user_id=user_id, recipe_id=recipe_id, amount=amount, note=note, created_at=now)
+
+    def get_cost_logs(self, user_id: int, limit: int = 50) -> list[CostLog]:
+        conn = self._get_conn()
+        rows = conn.execute("SELECT * FROM cost_logs WHERE user_id=? ORDER BY created_at DESC LIMIT ?",
+                            (user_id, limit)).fetchall()
+        conn.close()
+        return [CostLog(**dict(r)) for r in rows]
+
+    def get_total_cost(self, user_id: int, days: int = 30) -> float:
+        conn = self._get_conn()
+        cutoff = time.time() - days * 86400
+        row = conn.execute("SELECT COALESCE(SUM(amount),0) FROM cost_logs WHERE user_id=? AND created_at>=?",
+                           (user_id, cutoff)).fetchone()
+        conn.close()
+        return row[0]
+
+    # --- Recipe Reactions (Feature 78) ---
+
+    def add_reaction(self, user_id: int, recipe_id: int, emoji: str) -> RecipeReaction:
+        conn = self._get_conn()
+        now = time.time()
+        try:
+            cur = conn.execute(
+                "INSERT INTO recipe_reactions (user_id, recipe_id, emoji, created_at) VALUES (?,?,?,?)",
+                (user_id, recipe_id, emoji, now))
+            conn.commit()
+            return RecipeReaction(id=cur.lastrowid, user_id=user_id, recipe_id=recipe_id, emoji=emoji, created_at=now)
+        except sqlite3.IntegrityError:
+            conn.close()
+            raise ValueError("이미 같은 리액션을 했습니다")
+
+    def remove_reaction(self, user_id: int, recipe_id: int, emoji: str) -> bool:
+        conn = self._get_conn()
+        cur = conn.execute("DELETE FROM recipe_reactions WHERE user_id=? AND recipe_id=? AND emoji=?",
+                           (user_id, recipe_id, emoji))
+        conn.commit()
+        conn.close()
+        return cur.rowcount > 0
+
+    def get_reactions(self, recipe_id: int) -> list[dict]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT emoji, COUNT(*) as cnt FROM recipe_reactions WHERE recipe_id=? GROUP BY emoji ORDER BY cnt DESC",
+            (recipe_id,)).fetchall()
+        conn.close()
+        return [{"emoji": r["emoji"], "count": r["cnt"]} for r in rows]
+
+    # --- Cooking Playlist (Feature 79) ---
+
+    def create_playlist(self, user_id: int, name: str) -> CookingPlaylist:
+        conn = self._get_conn()
+        now = time.time()
+        cur = conn.execute("INSERT INTO cooking_playlists (user_id, name, created_at) VALUES (?,?,?)",
+                           (user_id, name, now))
+        conn.commit()
+        pid = cur.lastrowid
+        conn.close()
+        return CookingPlaylist(id=pid, user_id=user_id, name=name, created_at=now)
+
+    def add_to_playlist(self, playlist_id: int, recipe_id: int, sort_order: int = 0) -> bool:
+        conn = self._get_conn()
+        try:
+            conn.execute("INSERT INTO playlist_items (playlist_id, recipe_id, sort_order) VALUES (?,?,?)",
+                         (playlist_id, recipe_id, sort_order))
+            conn.commit()
+            return True
+        except sqlite3.IntegrityError:
+            return False
+        finally:
+            conn.close()
+
+    def get_playlist_recipes(self, playlist_id: int) -> list[Recipe]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            """SELECT r.*, u.username AS author_name FROM playlist_items pi
+               JOIN recipes r ON pi.recipe_id=r.id JOIN users u ON r.author_id=u.id
+               WHERE pi.playlist_id=? ORDER BY pi.sort_order""",
+            (playlist_id,)).fetchall()
+        conn.close()
+        return [Recipe(**dict(r)) for r in rows]
+
+    def get_user_playlists(self, user_id: int) -> list[CookingPlaylist]:
+        conn = self._get_conn()
+        rows = conn.execute("SELECT * FROM cooking_playlists WHERE user_id=? ORDER BY created_at DESC",
+                            (user_id,)).fetchall()
+        conn.close()
+        return [CookingPlaylist(**dict(r)) for r in rows]
+
+    def delete_playlist(self, playlist_id: int, user_id: int) -> bool:
+        conn = self._get_conn()
+        cur = conn.execute("DELETE FROM cooking_playlists WHERE id=? AND user_id=?", (playlist_id, user_id))
+        conn.commit()
+        conn.close()
+        return cur.rowcount > 0
+
+    # --- Recipe Certification (Feature 80) ---
+
+    def certify_recipe(self, recipe_id: int, certifier_id: int) -> RecipeCertification:
+        conn = self._get_conn()
+        now = time.time()
+        conn.execute(
+            """INSERT INTO recipe_certifications (recipe_id, certified_by, certified_at) VALUES (?,?,?)
+               ON CONFLICT(recipe_id) DO UPDATE SET certified_by=?, certified_at=?""",
+            (recipe_id, certifier_id, now, certifier_id, now))
+        conn.commit()
+        conn.close()
+        return RecipeCertification(recipe_id=recipe_id, certified_by=certifier_id, certified_at=now)
+
+    def is_certified(self, recipe_id: int) -> bool:
+        conn = self._get_conn()
+        row = conn.execute("SELECT 1 FROM recipe_certifications WHERE recipe_id=?", (recipe_id,)).fetchone()
+        conn.close()
+        return row is not None
+
+    def get_certified_recipes(self, limit: int = 50) -> list[Recipe]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            """SELECT r.*, u.username AS author_name FROM recipe_certifications rc
+               JOIN recipes r ON rc.recipe_id=r.id JOIN users u ON r.author_id=u.id
+               ORDER BY rc.certified_at DESC LIMIT ?""", (limit,)).fetchall()
+        conn.close()
+        return [Recipe(**dict(r)) for r in rows]
+
+    # --- Ingredient Season (Feature 81) ---
+
+    def set_ingredient_season(self, name: str, seasons: list[str]) -> IngredientSeason:
+        conn = self._get_conn()
+        s = ",".join(seasons)
+        conn.execute(
+            """INSERT INTO ingredient_seasons (name, seasons) VALUES (?,?)
+               ON CONFLICT(name) DO UPDATE SET seasons=?""", (name.strip().lower(), s, s))
+        conn.commit()
+        conn.close()
+        return IngredientSeason(name=name.strip().lower(), seasons=s)
+
+    def get_seasonal_ingredients(self, season: str) -> list[str]:
+        conn = self._get_conn()
+        rows = conn.execute("SELECT name FROM ingredient_seasons WHERE seasons LIKE ?",
+                            (f"%{season}%",)).fetchall()
+        conn.close()
+        return [r["name"] for r in rows]
+
+    # --- Timer Presets (Feature 82) ---
+
+    def save_timer_preset(self, user_id: int, name: str, timers_json: str) -> TimerPreset:
+        conn = self._get_conn()
+        now = time.time()
+        conn.execute(
+            """INSERT INTO timer_presets (user_id, name, timers_json, created_at) VALUES (?,?,?,?)
+               ON CONFLICT(user_id, name) DO UPDATE SET timers_json=?, created_at=?""",
+            (user_id, name, timers_json, now, timers_json, now))
+        conn.commit()
+        row = conn.execute("SELECT * FROM timer_presets WHERE user_id=? AND name=?", (user_id, name)).fetchone()
+        conn.close()
+        return TimerPreset(**dict(row))
+
+    def get_timer_presets(self, user_id: int) -> list[TimerPreset]:
+        conn = self._get_conn()
+        rows = conn.execute("SELECT * FROM timer_presets WHERE user_id=? ORDER BY created_at DESC",
+                            (user_id,)).fetchall()
+        conn.close()
+        return [TimerPreset(**dict(r)) for r in rows]
+
+    def delete_timer_preset(self, preset_id: int, user_id: int) -> bool:
+        conn = self._get_conn()
+        cur = conn.execute("DELETE FROM timer_presets WHERE id=? AND user_id=?", (preset_id, user_id))
+        conn.commit()
+        conn.close()
+        return cur.rowcount > 0
+
+    # --- Recipe Edit History (Feature 83) ---
+
+    def log_recipe_edit(self, recipe_id: int, user_id: int, field_name: str, old_value: str, new_value: str) -> RecipeEditLog:
+        conn = self._get_conn()
+        now = time.time()
+        cur = conn.execute(
+            "INSERT INTO recipe_edit_history (recipe_id, user_id, field_name, old_value, new_value, edited_at) VALUES (?,?,?,?,?,?)",
+            (recipe_id, user_id, field_name, old_value, new_value, now))
+        conn.commit()
+        eid = cur.lastrowid
+        conn.close()
+        return RecipeEditLog(id=eid, recipe_id=recipe_id, user_id=user_id, field_name=field_name,
+                             old_value=old_value, new_value=new_value, edited_at=now)
+
+    def get_edit_history(self, recipe_id: int, limit: int = 50) -> list[RecipeEditLog]:
+        conn = self._get_conn()
+        rows = conn.execute("SELECT * FROM recipe_edit_history WHERE recipe_id=? ORDER BY edited_at DESC LIMIT ?",
+                            (recipe_id, limit)).fetchall()
+        conn.close()
+        return [RecipeEditLog(**dict(r)) for r in rows]
+
+    # --- Social Share Tracking (Feature 84) ---
+
+    def track_social_share(self, recipe_id: int, platform: str) -> SocialShare:
+        conn = self._get_conn()
+        now = time.time()
+        cur = conn.execute("INSERT INTO social_shares (recipe_id, platform, shared_at) VALUES (?,?,?)",
+                           (recipe_id, platform, now))
+        conn.commit()
+        sid = cur.lastrowid
+        conn.close()
+        return SocialShare(id=sid, recipe_id=recipe_id, platform=platform, shared_at=now)
+
+    def get_social_shares(self, recipe_id: int) -> list[dict]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT platform, COUNT(*) as cnt FROM social_shares WHERE recipe_id=? GROUP BY platform",
+            (recipe_id,)).fetchall()
+        conn.close()
+        return [{"platform": r["platform"], "count": r["cnt"]} for r in rows]
+
+    # --- Recipe Templates (Feature 85) ---
+
+    def create_template(self, name: str, description: str, default_data_json: str) -> RecipeTemplate:
+        conn = self._get_conn()
+        now = time.time()
+        try:
+            cur = conn.execute(
+                "INSERT INTO recipe_templates (name, description, default_data_json, created_at) VALUES (?,?,?,?)",
+                (name, description, default_data_json, now))
+            conn.commit()
+            return RecipeTemplate(id=cur.lastrowid, name=name, description=description,
+                                  default_data_json=default_data_json, created_at=now)
+        except sqlite3.IntegrityError:
+            raise ValueError("같은 이름의 템플릿이 존재합니다")
+        finally:
+            conn.close()
+
+    def get_templates(self) -> list[RecipeTemplate]:
+        conn = self._get_conn()
+        rows = conn.execute("SELECT * FROM recipe_templates ORDER BY created_at DESC").fetchall()
+        conn.close()
+        return [RecipeTemplate(**dict(r)) for r in rows]
+
+    def get_template(self, template_id: int) -> RecipeTemplate | None:
+        conn = self._get_conn()
+        row = conn.execute("SELECT * FROM recipe_templates WHERE id=?", (template_id,)).fetchone()
+        conn.close()
+        return RecipeTemplate(**dict(row)) if row else None
+
+    # --- Cooking Skill (Feature 86) ---
+
+    def set_cooking_skill(self, user_id: int, skill_level: str) -> dict:
+        if skill_level not in ("beginner", "intermediate", "advanced", "expert"):
+            raise ValueError("잘못된 스킬 레벨입니다")
+        conn = self._get_conn()
+        conn.execute(
+            """INSERT INTO cooking_skills (user_id, skill_level) VALUES (?,?)
+               ON CONFLICT(user_id) DO UPDATE SET skill_level=?""",
+            (user_id, skill_level, skill_level))
+        conn.commit()
+        conn.close()
+        return {"user_id": user_id, "skill_level": skill_level}
+
+    def get_cooking_skill(self, user_id: int) -> str:
+        conn = self._get_conn()
+        row = conn.execute("SELECT skill_level FROM cooking_skills WHERE user_id=?", (user_id,)).fetchone()
+        conn.close()
+        return row["skill_level"] if row else "beginner"
+
+    # --- Default Servings (Feature 87) ---
+
+    def set_default_servings(self, user_id: int, servings: int) -> dict:
+        conn = self._get_conn()
+        conn.execute(
+            """INSERT INTO serving_preferences (user_id, default_servings) VALUES (?,?)
+               ON CONFLICT(user_id) DO UPDATE SET default_servings=?""",
+            (user_id, servings, servings))
+        conn.commit()
+        conn.close()
+        return {"user_id": user_id, "default_servings": servings}
+
+    def get_default_servings(self, user_id: int) -> int:
+        conn = self._get_conn()
+        row = conn.execute("SELECT default_servings FROM serving_preferences WHERE user_id=?", (user_id,)).fetchone()
+        conn.close()
+        return row["default_servings"] if row else 2
+
+    # --- Recipe Archive (Feature 88) ---
+
+    def archive_recipe(self, recipe_id: int, user_id: int) -> bool:
+        conn = self._get_conn()
+        try:
+            conn.execute("INSERT INTO recipe_archives (recipe_id, user_id) VALUES (?,?)", (recipe_id, user_id))
+            conn.commit()
+            return True
+        except sqlite3.IntegrityError:
+            return False
+        finally:
+            conn.close()
+
+    def unarchive_recipe(self, recipe_id: int, user_id: int) -> bool:
+        conn = self._get_conn()
+        cur = conn.execute("DELETE FROM recipe_archives WHERE recipe_id=? AND user_id=?", (recipe_id, user_id))
+        conn.commit()
+        conn.close()
+        return cur.rowcount > 0
+
+    def get_archived_recipes(self, user_id: int) -> list[Recipe]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            """SELECT r.*, u.username AS author_name FROM recipe_archives ra
+               JOIN recipes r ON ra.recipe_id=r.id JOIN users u ON r.author_id=u.id
+               WHERE ra.user_id=? ORDER BY ra.archived_at DESC""", (user_id,)).fetchall()
+        conn.close()
+        return [Recipe(**dict(r)) for r in rows]
+
+    # --- Ingredient Usage Stats (Feature 89) ---
+
+    def get_ingredient_usage_stats(self, limit: int = 20) -> list[dict]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT name, COUNT(*) as cnt FROM ingredients GROUP BY LOWER(name) ORDER BY cnt DESC LIMIT ?",
+            (limit,)).fetchall()
+        conn.close()
+        return [{"name": r["name"], "count": r["cnt"]} for r in rows]
+
+    def get_user_ingredient_stats(self, user_id: int, limit: int = 20) -> list[dict]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            """SELECT i.name, COUNT(*) as cnt FROM ingredients i
+               JOIN recipes r ON i.recipe_id=r.id WHERE r.author_id=?
+               GROUP BY LOWER(i.name) ORDER BY cnt DESC LIMIT ?""",
+            (user_id, limit)).fetchall()
+        conn.close()
+        return [{"name": r["name"], "count": r["cnt"]} for r in rows]
+
+    # --- Auto Menu Plan (Feature 90) ---
+
+    def generate_weekly_menu(self, user_id: int, start_date: str) -> list[dict]:
+        conn = self._get_conn()
+        recipes = conn.execute(
+            "SELECT r.*, u.username AS author_name FROM recipes r JOIN users u ON r.author_id=u.id WHERE r.is_public=1 ORDER BY r.rating_avg DESC LIMIT 21"
+        ).fetchall()
+        conn.close()
+        recipe_list = [Recipe(**dict(r)) for r in recipes]
+        result = []
+        meal_types = ["breakfast", "lunch", "dinner"]
+        from datetime import datetime, timedelta
+        base = datetime.strptime(start_date, "%Y-%m-%d")
+        idx = 0
+        for day in range(7):
+            d = (base + timedelta(days=day)).strftime("%Y-%m-%d")
+            for mt in meal_types:
+                if idx < len(recipe_list):
+                    self.set_meal_plan(user_id, d, mt, recipe_list[idx].id)
+                    result.append({"date": d, "meal_type": mt, "recipe_id": recipe_list[idx].id, "title": recipe_list[idx].title})
+                    idx += 1
+        return result
+
+    # --- Cost Compare (Feature 91) ---
+
+    def compare_recipe_costs(self, recipe_ids: list[int]) -> list[dict]:
+        results = []
+        for rid in recipe_ids:
+            cost_data = self.estimate_recipe_cost(rid)
+            results.append({"recipe_id": rid, **cost_data})
+        return sorted(results, key=lambda x: x.get("total_cost", 0))
+
+    # --- Achievements V2 (Feature 92) ---
+
+    def create_achievement(self, code: str, name: str, description: str, condition_type: str, condition_value: int) -> dict:
+        conn = self._get_conn()
+        try:
+            conn.execute(
+                "INSERT INTO achievements (code, name, description, condition_type, condition_value) VALUES (?,?,?,?,?)",
+                (code, name, description, condition_type, condition_value))
+            conn.commit()
+            return {"code": code, "name": name, "condition_type": condition_type}
+        except sqlite3.IntegrityError:
+            raise ValueError("이미 존재하는 업적입니다")
+        finally:
+            conn.close()
+
+    def check_achievements(self, user_id: int) -> list[str]:
+        conn = self._get_conn()
+        achievements = conn.execute("SELECT * FROM achievements").fetchall()
+        awarded = []
+        for a in achievements:
+            existing = conn.execute("SELECT 1 FROM user_achievements WHERE user_id=? AND achievement_id=?",
+                                    (user_id, a["id"])).fetchone()
+            if existing:
+                continue
+            met = False
+            ct = a["condition_type"]
+            cv = a["condition_value"]
+            if ct == "recipes_created":
+                cnt = conn.execute("SELECT COUNT(*) FROM recipes WHERE author_id=?", (user_id,)).fetchone()[0]
+                met = cnt >= cv
+            elif ct == "likes_received":
+                cnt = conn.execute("SELECT COALESCE(SUM(like_count),0) FROM recipes WHERE author_id=?", (user_id,)).fetchone()[0]
+                met = cnt >= cv
+            elif ct == "cook_logs":
+                cnt = conn.execute("SELECT COUNT(*) FROM cook_logs WHERE user_id=?", (user_id,)).fetchone()[0]
+                met = cnt >= cv
+            if met:
+                conn.execute("INSERT OR IGNORE INTO user_achievements (user_id, achievement_id) VALUES (?,?)",
+                             (user_id, a["id"]))
+                awarded.append(a["code"])
+        conn.commit()
+        conn.close()
+        return awarded
+
+    def get_user_achievements(self, user_id: int) -> list[dict]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            """SELECT a.code, a.name, a.description, ua.awarded_at FROM user_achievements ua
+               JOIN achievements a ON ua.achievement_id=a.id WHERE ua.user_id=? ORDER BY ua.awarded_at DESC""",
+            (user_id,)).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+    # --- Hashtags (Feature 93) ---
+
+    def add_hashtag(self, recipe_id: int, hashtag: str) -> dict:
+        tag = hashtag.strip().lower().lstrip("#")
+        conn = self._get_conn()
+        try:
+            conn.execute("INSERT INTO hashtags (recipe_id, hashtag) VALUES (?,?)", (recipe_id, tag))
+            conn.commit()
+            return {"recipe_id": recipe_id, "hashtag": tag}
+        except sqlite3.IntegrityError:
+            return {"recipe_id": recipe_id, "hashtag": tag, "exists": True}
+        finally:
+            conn.close()
+
+    def remove_hashtag(self, recipe_id: int, hashtag: str) -> bool:
+        conn = self._get_conn()
+        cur = conn.execute("DELETE FROM hashtags WHERE recipe_id=? AND hashtag=?",
+                           (recipe_id, hashtag.strip().lower().lstrip("#")))
+        conn.commit()
+        conn.close()
+        return cur.rowcount > 0
+
+    def search_by_hashtag(self, hashtag: str, limit: int = 50) -> list[Recipe]:
+        tag = hashtag.strip().lower().lstrip("#")
+        conn = self._get_conn()
+        rows = conn.execute(
+            """SELECT r.*, u.username AS author_name FROM hashtags h
+               JOIN recipes r ON h.recipe_id=r.id JOIN users u ON r.author_id=u.id
+               WHERE h.hashtag=? ORDER BY r.created_at DESC LIMIT ?""", (tag, limit)).fetchall()
+        conn.close()
+        return [Recipe(**dict(r)) for r in rows]
+
+    def get_trending_hashtags(self, limit: int = 10) -> list[dict]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT hashtag, COUNT(*) as cnt FROM hashtags GROUP BY hashtag ORDER BY cnt DESC LIMIT ?",
+            (limit,)).fetchall()
+        conn.close()
+        return [{"hashtag": r["hashtag"], "count": r["cnt"]} for r in rows]
+
+    # --- Price Alert (Feature 94) ---
+
+    def set_price_alert(self, user_id: int, ingredient: str, max_price: float) -> PriceAlert:
+        conn = self._get_conn()
+        now = time.time()
+        conn.execute(
+            """INSERT INTO price_alerts (user_id, ingredient, max_price, created_at) VALUES (?,?,?,?)
+               ON CONFLICT(user_id, ingredient) DO UPDATE SET max_price=?, created_at=?""",
+            (user_id, ingredient.lower(), max_price, now, max_price, now))
+        conn.commit()
+        conn.close()
+        return PriceAlert(user_id=user_id, ingredient=ingredient.lower(), max_price=max_price, created_at=now)
+
+    def get_price_alerts(self, user_id: int) -> list[PriceAlert]:
+        conn = self._get_conn()
+        rows = conn.execute("SELECT * FROM price_alerts WHERE user_id=?", (user_id,)).fetchall()
+        conn.close()
+        return [PriceAlert(**dict(r)) for r in rows]
+
+    def check_price_alerts(self, user_id: int) -> list[dict]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            """SELECT pa.ingredient, pa.max_price, ip.price as current_price FROM price_alerts pa
+               JOIN ingredient_prices ip ON LOWER(ip.name)=pa.ingredient
+               WHERE pa.user_id=? AND ip.price <= pa.max_price""", (user_id,)).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+    # --- Recipe Collaboration (Feature 95) ---
+
+    def invite_collaborator(self, recipe_id: int, user_id: int, role: str = "editor") -> dict:
+        conn = self._get_conn()
+        now = time.time()
+        try:
+            conn.execute("INSERT INTO recipe_collaborators (recipe_id, user_id, role, added_at) VALUES (?,?,?,?)",
+                         (recipe_id, user_id, role, now))
+            conn.commit()
+            return {"recipe_id": recipe_id, "user_id": user_id, "role": role}
+        except sqlite3.IntegrityError:
+            raise ValueError("이미 협업자입니다")
+        finally:
+            conn.close()
+
+    def get_collaborators(self, recipe_id: int) -> list[dict]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            """SELECT rc.user_id, u.username, rc.role, rc.added_at FROM recipe_collaborators rc
+               JOIN users u ON rc.user_id=u.id WHERE rc.recipe_id=?""", (recipe_id,)).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+    def remove_collaborator(self, recipe_id: int, user_id: int) -> bool:
+        conn = self._get_conn()
+        cur = conn.execute("DELETE FROM recipe_collaborators WHERE recipe_id=? AND user_id=?", (recipe_id, user_id))
+        conn.commit()
+        conn.close()
+        return cur.rowcount > 0
+
+    # --- Cooking Class (Feature 96) ---
+
+    def create_cooking_class(self, title: str, description: str, instructor_id: int,
+                              scheduled_date: str, max_participants: int = 20) -> CookingClass:
+        conn = self._get_conn()
+        now = time.time()
+        cur = conn.execute(
+            "INSERT INTO cooking_classes (title, description, instructor_id, scheduled_date, max_participants, created_at) VALUES (?,?,?,?,?,?)",
+            (title, description, instructor_id, scheduled_date, max_participants, now))
+        conn.commit()
+        cid = cur.lastrowid
+        conn.close()
+        return CookingClass(id=cid, title=title, description=description, instructor_id=instructor_id,
+                             scheduled_date=scheduled_date, max_participants=max_participants, created_at=now)
+
+    def join_cooking_class(self, class_id: int, user_id: int) -> dict:
+        conn = self._get_conn()
+        cnt = conn.execute("SELECT COUNT(*) FROM class_registrations WHERE class_id=?", (class_id,)).fetchone()[0]
+        cls = conn.execute("SELECT max_participants FROM cooking_classes WHERE id=?", (class_id,)).fetchone()
+        if not cls:
+            conn.close()
+            raise ValueError("클래스를 찾을 수 없습니다")
+        if cnt >= cls["max_participants"]:
+            conn.close()
+            raise ValueError("정원이 초과되었습니다")
+        try:
+            conn.execute("INSERT INTO class_registrations (class_id, user_id) VALUES (?,?)", (class_id, user_id))
+            conn.commit()
+            return {"class_id": class_id, "user_id": user_id, "participants": cnt + 1}
+        except sqlite3.IntegrityError:
+            raise ValueError("이미 등록되었습니다")
+        finally:
+            conn.close()
+
+    def get_cooking_classes(self, upcoming_only: bool = True) -> list[CookingClass]:
+        conn = self._get_conn()
+        if upcoming_only:
+            from datetime import date
+            today = date.today().isoformat()
+            rows = conn.execute("SELECT * FROM cooking_classes WHERE scheduled_date>=? ORDER BY scheduled_date",
+                                (today,)).fetchall()
+        else:
+            rows = conn.execute("SELECT * FROM cooking_classes ORDER BY scheduled_date DESC").fetchall()
+        conn.close()
+        return [CookingClass(**dict(r)) for r in rows]
+
+    def get_class_participants(self, class_id: int) -> list[dict]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            """SELECT u.id, u.username, cr.registered_at FROM class_registrations cr
+               JOIN users u ON cr.user_id=u.id WHERE cr.class_id=?""", (class_id,)).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+    # --- Recipe Bundle (Feature 97) ---
+
+    def create_bundle(self, user_id: int, name: str, description: str = "") -> RecipeBundle:
+        conn = self._get_conn()
+        now = time.time()
+        cur = conn.execute("INSERT INTO recipe_bundles (name, description, created_by, created_at) VALUES (?,?,?,?)",
+                           (name, description, user_id, now))
+        conn.commit()
+        bid = cur.lastrowid
+        conn.close()
+        return RecipeBundle(id=bid, name=name, description=description, created_by=user_id, created_at=now)
+
+    def add_to_bundle(self, bundle_id: int, recipe_id: int, sort_order: int = 0) -> bool:
+        conn = self._get_conn()
+        try:
+            conn.execute("INSERT INTO bundle_items (bundle_id, recipe_id, sort_order) VALUES (?,?,?)",
+                         (bundle_id, recipe_id, sort_order))
+            conn.commit()
+            return True
+        except sqlite3.IntegrityError:
+            return False
+        finally:
+            conn.close()
+
+    def get_bundle_recipes(self, bundle_id: int) -> list[Recipe]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            """SELECT r.*, u.username AS author_name FROM bundle_items bi
+               JOIN recipes r ON bi.recipe_id=r.id JOIN users u ON r.author_id=u.id
+               WHERE bi.bundle_id=? ORDER BY bi.sort_order""", (bundle_id,)).fetchall()
+        conn.close()
+        return [Recipe(**dict(r)) for r in rows]
+
+    def get_bundles(self) -> list[RecipeBundle]:
+        conn = self._get_conn()
+        rows = conn.execute("SELECT * FROM recipe_bundles ORDER BY created_at DESC").fetchall()
+        conn.close()
+        return [RecipeBundle(**dict(r)) for r in rows]
+
+    # --- Meal Prep (Feature 98) ---
+
+    def create_meal_prep(self, user_id: int, name: str, prep_date: str, servings: int = 4) -> MealPrep:
+        conn = self._get_conn()
+        now = time.time()
+        cur = conn.execute("INSERT INTO meal_preps (user_id, name, prep_date, servings, created_at) VALUES (?,?,?,?,?)",
+                           (user_id, name, prep_date, servings, now))
+        conn.commit()
+        pid = cur.lastrowid
+        conn.close()
+        return MealPrep(id=pid, user_id=user_id, name=name, prep_date=prep_date, servings=servings, created_at=now)
+
+    def add_meal_prep_recipe(self, prep_id: int, recipe_id: int) -> bool:
+        conn = self._get_conn()
+        try:
+            conn.execute("INSERT INTO meal_prep_recipes (prep_id, recipe_id) VALUES (?,?)", (prep_id, recipe_id))
+            conn.commit()
+            return True
+        except sqlite3.IntegrityError:
+            return False
+        finally:
+            conn.close()
+
+    def get_meal_prep_recipes(self, prep_id: int) -> list[Recipe]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            """SELECT r.*, u.username AS author_name FROM meal_prep_recipes mpr
+               JOIN recipes r ON mpr.recipe_id=r.id JOIN users u ON r.author_id=u.id
+               WHERE mpr.prep_id=?""", (prep_id,)).fetchall()
+        conn.close()
+        return [Recipe(**dict(r)) for r in rows]
+
+    def get_user_meal_preps(self, user_id: int) -> list[MealPrep]:
+        conn = self._get_conn()
+        rows = conn.execute("SELECT * FROM meal_preps WHERE user_id=? ORDER BY created_at DESC", (user_id,)).fetchall()
+        conn.close()
+        return [MealPrep(**dict(r)) for r in rows]
+
+    # --- Recipe Analytics (Feature 99) ---
+
+    def get_recipe_analytics(self, recipe_id: int) -> dict:
+        conn = self._get_conn()
+        recipe = self.get_recipe(recipe_id)
+        if not recipe:
+            conn.close()
+            raise ValueError("레시피를 찾을 수 없습니다")
+        comment_cnt = conn.execute("SELECT COUNT(*) FROM comments WHERE recipe_id=?", (recipe_id,)).fetchone()[0]
+        cook_cnt = conn.execute("SELECT COUNT(*) FROM cook_logs WHERE recipe_id=?", (recipe_id,)).fetchone()[0]
+        conn.close()
+        return {
+            "recipe_id": recipe_id, "title": recipe.title,
+            "views": recipe.view_count, "likes": recipe.like_count,
+            "bookmarks": recipe.bookmark_count, "comments": comment_cnt,
+            "cook_logs": cook_cnt, "rating_avg": recipe.rating_avg,
+            "rating_count": recipe.rating_count, "forks": recipe.fork_count,
+        }
+
+    def get_author_analytics(self, user_id: int) -> dict:
+        conn = self._get_conn()
+        stats = conn.execute(
+            """SELECT COUNT(*) as total, COALESCE(SUM(like_count),0) as likes,
+               COALESCE(SUM(view_count),0) as views, COALESCE(AVG(rating_avg),0) as avg_rating
+               FROM recipes WHERE author_id=?""", (user_id,)).fetchone()
+        follower_cnt = conn.execute("SELECT COUNT(*) FROM follows WHERE following_id=?", (user_id,)).fetchone()[0]
+        conn.close()
+        return {"user_id": user_id, "total_recipes": stats["total"], "total_likes": stats["likes"],
+                "total_views": stats["views"], "avg_rating": round(stats["avg_rating"], 2),
+                "followers": follower_cnt}
+
+    # --- Flavor Profile (Feature 100) ---
+
+    def set_flavor_profile(self, recipe_id: int, sweet: int = 0, salty: int = 0, sour: int = 0,
+                            bitter: int = 0, umami: int = 0, spicy: int = 0) -> dict:
+        conn = self._get_conn()
+        conn.execute(
+            """INSERT INTO flavor_profiles (recipe_id, sweet, salty, sour, bitter, umami, spicy) VALUES (?,?,?,?,?,?,?)
+               ON CONFLICT(recipe_id) DO UPDATE SET sweet=?, salty=?, sour=?, bitter=?, umami=?, spicy=?""",
+            (recipe_id, sweet, salty, sour, bitter, umami, spicy, sweet, salty, sour, bitter, umami, spicy))
+        conn.commit()
+        conn.close()
+        return {"recipe_id": recipe_id, "sweet": sweet, "salty": salty, "sour": sour,
+                "bitter": bitter, "umami": umami, "spicy": spicy}
+
+    def get_flavor_profile(self, recipe_id: int) -> dict | None:
+        conn = self._get_conn()
+        row = conn.execute("SELECT * FROM flavor_profiles WHERE recipe_id=?", (recipe_id,)).fetchone()
+        conn.close()
+        if not row:
+            return None
+        return {"sweet": row["sweet"], "salty": row["salty"], "sour": row["sour"],
+                "bitter": row["bitter"], "umami": row["umami"], "spicy": row["spicy"]}
+
+    def find_by_flavor(self, flavor: str, min_score: int = 3, limit: int = 20) -> list[Recipe]:
+        if flavor not in ("sweet", "salty", "sour", "bitter", "umami", "spicy"):
+            return []
+        conn = self._get_conn()
+        rows = conn.execute(
+            f"""SELECT r.*, u.username AS author_name FROM flavor_profiles fp
+                JOIN recipes r ON fp.recipe_id=r.id JOIN users u ON r.author_id=u.id
+                WHERE fp.{flavor} >= ? ORDER BY fp.{flavor} DESC LIMIT ?""",
+            (min_score, limit)).fetchall()
+        conn.close()
+        return [Recipe(**dict(r)) for r in rows]
+
+    # --- Approval Queue (Feature 101) ---
+
+    def submit_for_approval(self, recipe_id: int, user_id: int) -> dict:
+        conn = self._get_conn()
+        now = time.time()
+        try:
+            conn.execute("INSERT INTO approval_queue (recipe_id, submitted_by, submitted_at) VALUES (?,?,?)",
+                         (recipe_id, user_id, now))
+            conn.commit()
+            return {"recipe_id": recipe_id, "status": "pending"}
+        except sqlite3.IntegrityError:
+            raise ValueError("이미 승인 요청 중입니다")
+        finally:
+            conn.close()
+
+    def approve_recipe_submission(self, recipe_id: int, reviewer_id: int) -> dict:
+        conn = self._get_conn()
+        now = time.time()
+        cur = conn.execute(
+            "UPDATE approval_queue SET status='approved', reviewer_id=?, reviewed_at=? WHERE recipe_id=? AND status='pending'",
+            (reviewer_id, now, recipe_id))
+        conn.commit()
+        conn.close()
+        return {"recipe_id": recipe_id, "status": "approved", "updated": cur.rowcount > 0}
+
+    def reject_recipe_submission(self, recipe_id: int, reviewer_id: int, reason: str = "") -> dict:
+        conn = self._get_conn()
+        now = time.time()
+        cur = conn.execute(
+            "UPDATE approval_queue SET status='rejected', reviewer_id=?, reason=?, reviewed_at=? WHERE recipe_id=? AND status='pending'",
+            (reviewer_id, reason, now, recipe_id))
+        conn.commit()
+        conn.close()
+        return {"recipe_id": recipe_id, "status": "rejected", "updated": cur.rowcount > 0}
+
+    def get_pending_approvals(self, limit: int = 50) -> list[dict]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            """SELECT aq.*, r.title FROM approval_queue aq
+               JOIN recipes r ON aq.recipe_id=r.id WHERE aq.status='pending'
+               ORDER BY aq.submitted_at LIMIT ?""", (limit,)).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+    # --- Cooking Journal (Feature 102) ---
+
+    def add_journal_entry(self, user_id: int, date: str, content: str,
+                           recipe_id: int | None = None, mood: str = "") -> JournalEntry:
+        conn = self._get_conn()
+        now = time.time()
+        cur = conn.execute(
+            "INSERT INTO cooking_journal (user_id, date, content, recipe_id, mood, created_at) VALUES (?,?,?,?,?,?)",
+            (user_id, date, content, recipe_id, mood, now))
+        conn.commit()
+        jid = cur.lastrowid
+        conn.close()
+        return JournalEntry(id=jid, user_id=user_id, date=date, content=content,
+                             recipe_id=recipe_id, mood=mood, created_at=now)
+
+    def get_journal_entries(self, user_id: int, start_date: str | None = None,
+                             end_date: str | None = None, limit: int = 50) -> list[JournalEntry]:
+        conn = self._get_conn()
+        query = "SELECT * FROM cooking_journal WHERE user_id=?"
+        params: list = [user_id]
+        if start_date:
+            query += " AND date>=?"
+            params.append(start_date)
+        if end_date:
+            query += " AND date<=?"
+            params.append(end_date)
+        query += " ORDER BY date DESC LIMIT ?"
+        params.append(limit)
+        rows = conn.execute(query, params).fetchall()
+        conn.close()
+        return [JournalEntry(**dict(r)) for r in rows]
+
+    # --- Remix Chain (Feature 103) ---
+
+    def get_remix_chain(self, recipe_id: int) -> list[dict]:
+        conn = self._get_conn()
+        chain = []
+        current = recipe_id
+        while current:
+            row = conn.execute(
+                "SELECT r.id, r.title, r.forked_from_id, u.username AS author_name FROM recipes r JOIN users u ON r.author_id=u.id WHERE r.id=?",
+                (current,)).fetchone()
+            if not row:
+                break
+            chain.append(dict(row))
+            current = row["forked_from_id"]
+        conn.close()
+        chain.reverse()
+        return chain
+
+    def get_remix_tree(self, recipe_id: int) -> list[dict]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT r.id, r.title, u.username AS author_name FROM recipes r JOIN users u ON r.author_id=u.id WHERE r.forked_from_id=?",
+            (recipe_id,)).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+    # --- Ingredient Pairing (Feature 104) ---
+
+    def add_ingredient_pairing(self, ing_a: str, ing_b: str, score: int = 5) -> dict:
+        a, b = sorted([ing_a.lower().strip(), ing_b.lower().strip()])
+        conn = self._get_conn()
+        conn.execute(
+            """INSERT INTO ingredient_pairings (ingredient_a, ingredient_b, score) VALUES (?,?,?)
+               ON CONFLICT(ingredient_a, ingredient_b) DO UPDATE SET score=?""",
+            (a, b, score, score))
+        conn.commit()
+        conn.close()
+        return {"ingredient_a": a, "ingredient_b": b, "score": score}
+
+    def get_pairings(self, ingredient: str, limit: int = 10) -> list[dict]:
+        ing = ingredient.lower().strip()
+        conn = self._get_conn()
+        rows = conn.execute(
+            """SELECT * FROM ingredient_pairings WHERE ingredient_a=? OR ingredient_b=?
+               ORDER BY score DESC LIMIT ?""", (ing, ing, limit)).fetchall()
+        conn.close()
+        result = []
+        for r in rows:
+            other = r["ingredient_b"] if r["ingredient_a"] == ing else r["ingredient_a"]
+            result.append({"ingredient": other, "score": r["score"]})
+        return result
+
+    def suggest_pairings(self, recipe_id: int, limit: int = 5) -> list[dict]:
+        ings = self.get_recipe_ingredients(recipe_id)
+        names = [i.name.lower().strip() for i in ings]
+        suggestions = {}
+        for name in names:
+            pairs = self.get_pairings(name, limit=limit)
+            for p in pairs:
+                if p["ingredient"] not in names and p["ingredient"] not in suggestions:
+                    suggestions[p["ingredient"]] = p["score"]
+        return sorted([{"ingredient": k, "score": v} for k, v in suggestions.items()],
+                      key=lambda x: x["score"], reverse=True)[:limit]
+
+    # --- Mood Tags (Feature 105) ---
+
+    def set_mood_tags(self, recipe_id: int, moods: list[str]) -> list[str]:
+        conn = self._get_conn()
+        conn.execute("DELETE FROM mood_tags WHERE recipe_id=?", (recipe_id,))
+        for m in moods:
+            conn.execute("INSERT INTO mood_tags (recipe_id, mood) VALUES (?,?)", (recipe_id, m.lower().strip()))
+        conn.commit()
+        conn.close()
+        return [m.lower().strip() for m in moods]
+
+    def get_mood_tags(self, recipe_id: int) -> list[str]:
+        conn = self._get_conn()
+        rows = conn.execute("SELECT mood FROM mood_tags WHERE recipe_id=?", (recipe_id,)).fetchall()
+        conn.close()
+        return [r["mood"] for r in rows]
+
+    def find_by_mood(self, mood: str, limit: int = 50) -> list[Recipe]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            """SELECT r.*, u.username AS author_name FROM mood_tags mt
+               JOIN recipes r ON mt.recipe_id=r.id JOIN users u ON r.author_id=u.id
+               WHERE mt.mood=? ORDER BY r.rating_avg DESC LIMIT ?""",
+            (mood.lower().strip(), limit)).fetchall()
+        conn.close()
+        return [Recipe(**dict(r)) for r in rows]
+
+    # --- Speed Challenge (Feature 106) ---
+
+    def create_speed_challenge(self, recipe_id: int, target_minutes: int) -> dict:
+        conn = self._get_conn()
+        now = time.time()
+        cur = conn.execute("INSERT INTO speed_challenges (recipe_id, target_minutes, created_at) VALUES (?,?,?)",
+                           (recipe_id, target_minutes, now))
+        conn.commit()
+        cid = cur.lastrowid
+        conn.close()
+        return {"id": cid, "recipe_id": recipe_id, "target_minutes": target_minutes}
+
+    def submit_speed_result(self, challenge_id: int, user_id: int, actual_minutes: int) -> dict:
+        conn = self._get_conn()
+        now = time.time()
+        try:
+            conn.execute("INSERT INTO speed_results (challenge_id, user_id, actual_minutes, created_at) VALUES (?,?,?,?)",
+                         (challenge_id, user_id, actual_minutes, now))
+            conn.commit()
+            return {"challenge_id": challenge_id, "actual_minutes": actual_minutes}
+        except sqlite3.IntegrityError:
+            raise ValueError("이미 결과를 제출했습니다")
+        finally:
+            conn.close()
+
+    def get_speed_rankings(self, challenge_id: int) -> list[dict]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            """SELECT sr.actual_minutes, u.username FROM speed_results sr
+               JOIN users u ON sr.user_id=u.id WHERE sr.challenge_id=?
+               ORDER BY sr.actual_minutes ASC""", (challenge_id,)).fetchall()
+        conn.close()
+        return [{"rank": i + 1, "username": r["username"], "actual_minutes": r["actual_minutes"]}
+                for i, r in enumerate(rows)]
+
+    # --- Recipe Gift (Feature 107) ---
+
+    def send_recipe_gift(self, sender_id: int, recipient_id: int, recipe_id: int, message: str = "") -> dict:
+        conn = self._get_conn()
+        now = time.time()
+        cur = conn.execute(
+            "INSERT INTO recipe_gifts (sender_id, recipient_id, recipe_id, message, created_at) VALUES (?,?,?,?,?)",
+            (sender_id, recipient_id, recipe_id, message, now))
+        conn.commit()
+        gid = cur.lastrowid
+        conn.close()
+        return {"id": gid, "sender_id": sender_id, "recipient_id": recipient_id, "recipe_id": recipe_id}
+
+    def get_received_gifts(self, user_id: int) -> list[dict]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            """SELECT rg.*, u.username AS sender_name, r.title AS recipe_title
+               FROM recipe_gifts rg JOIN users u ON rg.sender_id=u.id
+               JOIN recipes r ON rg.recipe_id=r.id
+               WHERE rg.recipient_id=? ORDER BY rg.created_at DESC""", (user_id,)).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+    def get_sent_gifts(self, user_id: int) -> list[dict]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            """SELECT rg.*, u.username AS recipient_name, r.title AS recipe_title
+               FROM recipe_gifts rg JOIN users u ON rg.recipient_id=u.id
+               JOIN recipes r ON rg.recipe_id=r.id
+               WHERE rg.sender_id=? ORDER BY rg.created_at DESC""", (user_id,)).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+    def open_gift(self, gift_id: int, user_id: int) -> bool:
+        conn = self._get_conn()
+        cur = conn.execute("UPDATE recipe_gifts SET is_opened=1 WHERE id=? AND recipient_id=? AND is_opened=0",
+                           (gift_id, user_id))
+        conn.commit()
+        conn.close()
+        return cur.rowcount > 0
+
+    # --- Ingredient Wiki (Feature 108) ---
+
+    def add_ingredient_info(self, name: str, description: str = "", tips: str = "", storage: str = "") -> dict:
+        conn = self._get_conn()
+        now = time.time()
+        conn.execute(
+            """INSERT INTO ingredient_wiki (name, description, tips, storage, created_at) VALUES (?,?,?,?,?)
+               ON CONFLICT(name) DO UPDATE SET description=?, tips=?, storage=?""",
+            (name.lower().strip(), description, tips, storage, now, description, tips, storage))
+        conn.commit()
+        conn.close()
+        return {"name": name.lower().strip(), "description": description, "tips": tips, "storage": storage}
+
+    def get_ingredient_info(self, name: str) -> dict | None:
+        conn = self._get_conn()
+        row = conn.execute("SELECT * FROM ingredient_wiki WHERE name=?", (name.lower().strip(),)).fetchone()
+        conn.close()
+        return dict(row) if row else None
+
+    def search_ingredient_wiki(self, query: str, limit: int = 20) -> list[dict]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT * FROM ingredient_wiki WHERE name LIKE ? OR description LIKE ? LIMIT ?",
+            (f"%{query}%", f"%{query}%", limit)).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+    # --- Recipe Calendar (Feature 109) ---
+
+    def get_recipe_calendar(self, user_id: int, year: int, month: int) -> dict:
+        start = f"{year:04d}-{month:02d}-01"
+        if month == 12:
+            end = f"{year + 1:04d}-01-31"
+        else:
+            end = f"{year:04d}-{month + 1:02d}-01"
+        plans = self.get_meal_plans(user_id, start, end)
+        days: dict[str, list] = {}
+        for p in plans:
+            days.setdefault(p.date, []).append({"meal_type": p.meal_type, "recipe_id": p.recipe_id})
+        return {"year": year, "month": month, "days": days}
+
+    # --- Cooking Technique (Feature 110) ---
+
+    def add_technique(self, name: str, description: str = "", difficulty: str = "easy") -> dict:
+        conn = self._get_conn()
+        try:
+            cur = conn.execute("INSERT INTO cooking_techniques (name, description, difficulty) VALUES (?,?,?)",
+                               (name, description, difficulty))
+            conn.commit()
+            return {"id": cur.lastrowid, "name": name, "description": description, "difficulty": difficulty}
+        except sqlite3.IntegrityError:
+            raise ValueError("이미 존재하는 기법입니다")
+        finally:
+            conn.close()
+
+    def get_techniques(self) -> list[dict]:
+        conn = self._get_conn()
+        rows = conn.execute("SELECT * FROM cooking_techniques ORDER BY name").fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+    def link_technique_to_recipe(self, recipe_id: int, technique_id: int) -> bool:
+        conn = self._get_conn()
+        try:
+            conn.execute("INSERT INTO recipe_techniques (recipe_id, technique_id) VALUES (?,?)",
+                         (recipe_id, technique_id))
+            conn.commit()
+            return True
+        except sqlite3.IntegrityError:
+            return False
+        finally:
+            conn.close()
+
+    def get_recipe_techniques(self, recipe_id: int) -> list[dict]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            """SELECT ct.* FROM recipe_techniques rt JOIN cooking_techniques ct ON rt.technique_id=ct.id
+               WHERE rt.recipe_id=?""", (recipe_id,)).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+    # --- Chef Endorsement (Feature 111) ---
+
+    def endorse_recipe(self, user_id: int, recipe_id: int, comment: str = "") -> dict:
+        conn = self._get_conn()
+        now = time.time()
+        try:
+            conn.execute("INSERT INTO chef_endorsements (recipe_id, user_id, comment, created_at) VALUES (?,?,?,?)",
+                         (recipe_id, user_id, comment, now))
+            conn.commit()
+            return {"recipe_id": recipe_id, "endorsed_by": user_id}
+        except sqlite3.IntegrityError:
+            raise ValueError("이미 추천했습니다")
+        finally:
+            conn.close()
+
+    def get_endorsements(self, recipe_id: int) -> list[dict]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            """SELECT ce.comment, ce.created_at, u.username FROM chef_endorsements ce
+               JOIN users u ON ce.user_id=u.id WHERE ce.recipe_id=? ORDER BY ce.created_at DESC""",
+            (recipe_id,)).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+    def get_endorsed_recipes(self, limit: int = 50) -> list[Recipe]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            """SELECT r.*, u.username AS author_name, COUNT(ce.id) as endorsement_count
+               FROM chef_endorsements ce JOIN recipes r ON ce.recipe_id=r.id
+               JOIN users u ON r.author_id=u.id GROUP BY ce.recipe_id
+               ORDER BY endorsement_count DESC LIMIT ?""", (limit,)).fetchall()
+        conn.close()
+        return [Recipe(**{k: v for k, v in dict(r).items() if k != "endorsement_count"}) for r in rows]
+
+    # --- Ingredient Origin (Feature 112) ---
+
+    def set_ingredient_origin(self, name: str, origin: str, description: str = "") -> dict:
+        conn = self._get_conn()
+        conn.execute(
+            """INSERT INTO ingredient_origins (name, origin, description) VALUES (?,?,?)
+               ON CONFLICT(name) DO UPDATE SET origin=?, description=?""",
+            (name.lower().strip(), origin, description, origin, description))
+        conn.commit()
+        conn.close()
+        return {"name": name.lower().strip(), "origin": origin, "description": description}
+
+    def get_ingredient_origin(self, name: str) -> dict | None:
+        conn = self._get_conn()
+        row = conn.execute("SELECT * FROM ingredient_origins WHERE name=?", (name.lower().strip(),)).fetchone()
+        conn.close()
+        return dict(row) if row else None
+
+    # --- Event Recipe (Feature 113) ---
+
+    def create_event(self, name: str, event_date: str, description: str = "") -> dict:
+        conn = self._get_conn()
+        now = time.time()
+        cur = conn.execute("INSERT INTO events (name, event_date, description, created_at) VALUES (?,?,?,?)",
+                           (name, event_date, description, now))
+        conn.commit()
+        eid = cur.lastrowid
+        conn.close()
+        return {"id": eid, "name": name, "event_date": event_date}
+
+    def link_recipe_to_event(self, event_id: int, recipe_id: int) -> bool:
+        conn = self._get_conn()
+        try:
+            conn.execute("INSERT INTO event_recipes (event_id, recipe_id) VALUES (?,?)", (event_id, recipe_id))
+            conn.commit()
+            return True
+        except sqlite3.IntegrityError:
+            return False
+        finally:
+            conn.close()
+
+    def get_event_recipes(self, event_id: int) -> list[Recipe]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            """SELECT r.*, u.username AS author_name FROM event_recipes er
+               JOIN recipes r ON er.recipe_id=r.id JOIN users u ON r.author_id=u.id
+               WHERE er.event_id=?""", (event_id,)).fetchall()
+        conn.close()
+        return [Recipe(**dict(r)) for r in rows]
+
+    def get_upcoming_events(self, limit: int = 10) -> list[dict]:
+        conn = self._get_conn()
+        from datetime import date
+        today = date.today().isoformat()
+        rows = conn.execute("SELECT * FROM events WHERE event_date>=? ORDER BY event_date LIMIT ?",
+                            (today, limit)).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+    # --- Group Cook (Feature 114) ---
+
+    def create_group_cook(self, recipe_id: int, host_id: int, cook_date: str, max_participants: int = 8) -> dict:
+        conn = self._get_conn()
+        now = time.time()
+        cur = conn.execute(
+            "INSERT INTO group_cooks (recipe_id, host_id, cook_date, max_participants, created_at) VALUES (?,?,?,?,?)",
+            (recipe_id, host_id, cook_date, max_participants, now))
+        conn.commit()
+        gid = cur.lastrowid
+        conn.close()
+        return {"id": gid, "recipe_id": recipe_id, "cook_date": cook_date}
+
+    def join_group_cook(self, group_id: int, user_id: int) -> dict:
+        conn = self._get_conn()
+        cnt = conn.execute("SELECT COUNT(*) FROM group_cook_members WHERE group_id=?", (group_id,)).fetchone()[0]
+        gc = conn.execute("SELECT max_participants FROM group_cooks WHERE id=?", (group_id,)).fetchone()
+        if not gc:
+            conn.close()
+            raise ValueError("그룹 쿠킹을 찾을 수 없습니다")
+        if cnt >= gc["max_participants"]:
+            conn.close()
+            raise ValueError("정원 초과")
+        try:
+            conn.execute("INSERT INTO group_cook_members (group_id, user_id) VALUES (?,?)", (group_id, user_id))
+            conn.commit()
+            return {"group_id": group_id, "members": cnt + 1}
+        except sqlite3.IntegrityError:
+            raise ValueError("이미 참여 중입니다")
+        finally:
+            conn.close()
+
+    def get_group_cooks(self, upcoming_only: bool = True) -> list[dict]:
+        conn = self._get_conn()
+        if upcoming_only:
+            from datetime import date
+            today = date.today().isoformat()
+            rows = conn.execute("SELECT * FROM group_cooks WHERE cook_date>=? ORDER BY cook_date", (today,)).fetchall()
+        else:
+            rows = conn.execute("SELECT * FROM group_cooks ORDER BY cook_date DESC").fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+    def get_group_members(self, group_id: int) -> list[dict]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            """SELECT u.id, u.username, gcm.joined_at FROM group_cook_members gcm
+               JOIN users u ON gcm.user_id=u.id WHERE gcm.group_id=?""", (group_id,)).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+    # --- Nutrition Match (Feature 115) ---
+
+    def find_nutrition_matching(self, target_calories: int | None = None, target_protein: float | None = None,
+                                 tolerance: float = 0.2, limit: int = 20) -> list[Recipe]:
+        conn = self._get_conn()
+        query = """SELECT r.*, u.username AS author_name FROM nutrition_info ni
+                   JOIN recipes r ON ni.recipe_id=r.id JOIN users u ON r.author_id=u.id WHERE 1=1"""
+        params: list = []
+        if target_calories:
+            low, high = target_calories * (1 - tolerance), target_calories * (1 + tolerance)
+            query += " AND ni.calories BETWEEN ? AND ?"
+            params.extend([low, high])
+        if target_protein:
+            low, high = target_protein * (1 - tolerance), target_protein * (1 + tolerance)
+            query += " AND ni.protein_g BETWEEN ? AND ?"
+            params.extend([low, high])
+        query += " LIMIT ?"
+        params.append(limit)
+        rows = conn.execute(query, params).fetchall()
+        conn.close()
+        return [Recipe(**dict(r)) for r in rows]
+
+    # --- Store Info (Feature 116) ---
+
+    def add_store(self, name: str, location: str = "", description: str = "") -> dict:
+        conn = self._get_conn()
+        cur = conn.execute("INSERT INTO stores (name, location, description) VALUES (?,?,?)",
+                           (name, location, description))
+        conn.commit()
+        sid = cur.lastrowid
+        conn.close()
+        return {"id": sid, "name": name, "location": location}
+
+    def link_ingredient_to_store(self, store_id: int, ingredient: str, price: float = 0) -> dict:
+        conn = self._get_conn()
+        conn.execute(
+            """INSERT INTO store_ingredients (store_id, ingredient, price) VALUES (?,?,?)
+               ON CONFLICT(store_id, ingredient) DO UPDATE SET price=?""",
+            (store_id, ingredient.lower(), price, price))
+        conn.commit()
+        conn.close()
+        return {"store_id": store_id, "ingredient": ingredient.lower(), "price": price}
+
+    def find_stores_for_ingredient(self, ingredient: str) -> list[dict]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            """SELECT s.name, s.location, si.price FROM store_ingredients si
+               JOIN stores s ON si.store_id=s.id WHERE si.ingredient=? ORDER BY si.price""",
+            (ingredient.lower(),)).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+    # --- Recipe Story (Feature 117) ---
+
+    def set_recipe_story(self, recipe_id: int, story: str) -> dict:
+        conn = self._get_conn()
+        now = time.time()
+        conn.execute(
+            """INSERT INTO recipe_stories (recipe_id, story, created_at) VALUES (?,?,?)
+               ON CONFLICT(recipe_id) DO UPDATE SET story=?, created_at=?""",
+            (recipe_id, story, now, story, now))
+        conn.commit()
+        conn.close()
+        return {"recipe_id": recipe_id, "story": story}
+
+    def get_recipe_story(self, recipe_id: int) -> str | None:
+        conn = self._get_conn()
+        row = conn.execute("SELECT story FROM recipe_stories WHERE recipe_id=?", (recipe_id,)).fetchone()
+        conn.close()
+        return row["story"] if row else None
+
+    # --- Cooking FAQ (Feature 118) ---
+
+    def add_faq(self, question: str, answer: str, category: str = "general") -> dict:
+        conn = self._get_conn()
+        now = time.time()
+        cur = conn.execute("INSERT INTO cooking_faqs (question, answer, category, created_at) VALUES (?,?,?,?)",
+                           (question, answer, category, now))
+        conn.commit()
+        fid = cur.lastrowid
+        conn.close()
+        return {"id": fid, "question": question, "answer": answer, "category": category}
+
+    def get_faqs(self, category: str | None = None, limit: int = 50) -> list[dict]:
+        conn = self._get_conn()
+        if category:
+            rows = conn.execute("SELECT * FROM cooking_faqs WHERE category=? ORDER BY created_at DESC LIMIT ?",
+                                (category, limit)).fetchall()
+        else:
+            rows = conn.execute("SELECT * FROM cooking_faqs ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+    def search_faqs(self, query: str, limit: int = 10) -> list[dict]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT * FROM cooking_faqs WHERE question LIKE ? OR answer LIKE ? LIMIT ?",
+            (f"%{query}%", f"%{query}%", limit)).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+    # --- Recipe Ranking (Feature 119) ---
+
+    def get_recipe_rankings(self, category: str | None = None, period: str = "all", limit: int = 20) -> list[dict]:
+        conn = self._get_conn()
+        where_parts = ["r.is_public=1"]
+        params: list = []
+        if category:
+            where_parts.append("r.category=?")
+            params.append(category)
+        if period == "week":
+            where_parts.append("r.created_at>=?")
+            params.append(time.time() - 7 * 86400)
+        elif period == "month":
+            where_parts.append("r.created_at>=?")
+            params.append(time.time() - 30 * 86400)
+        where = " AND ".join(where_parts)
+        params.append(limit)
+        rows = conn.execute(
+            f"""SELECT r.id, r.title, r.like_count, r.rating_avg, r.view_count, r.bookmark_count,
+                (r.like_count*3 + r.rating_avg*20 + r.view_count + r.bookmark_count*5) as score
+                FROM recipes r WHERE {where} ORDER BY score DESC LIMIT ?""",
+            params).fetchall()
+        conn.close()
+        return [{"rank": i + 1, **dict(r)} for i, r in enumerate(rows)]
+
+    # --- Weekly Digest (Feature 120) ---
+
+    def generate_weekly_digest(self, user_id: int) -> dict:
+        conn = self._get_conn()
+        week_ago = time.time() - 7 * 86400
+        following_recipes = conn.execute(
+            """SELECT r.id, r.title, u.username AS author_name FROM recipes r
+               JOIN follows f ON r.author_id=f.following_id
+               JOIN users u ON r.author_id=u.id
+               WHERE f.follower_id=? AND r.created_at>=? ORDER BY r.created_at DESC LIMIT 10""",
+            (user_id, week_ago)).fetchall()
+        popular = conn.execute(
+            """SELECT r.id, r.title FROM recipes r WHERE r.created_at>=? AND r.is_public=1
+               ORDER BY r.like_count DESC LIMIT 5""", (week_ago,)).fetchall()
+        new_followers = conn.execute(
+            "SELECT COUNT(*) FROM follows WHERE following_id=? AND created_at>=?",
+            (user_id, week_ago)).fetchone()[0]
+        conn.close()
+        return {
+            "new_from_following": [dict(r) for r in following_recipes],
+            "popular_this_week": [dict(r) for r in popular],
+            "new_followers": new_followers,
+        }
